@@ -1,0 +1,1 @@
+ALTER TABLE "outbox_events" ADD CONSTRAINT "outbox_events_lock_state_consistent" CHECK (("outbox_events"."status" = 'processing' AND "outbox_events"."locked_at" IS NOT NULL AND "outbox_events"."locked_by" IS NOT NULL) OR ("outbox_events"."status" <> 'processing' AND "outbox_events"."locked_at" IS NULL AND "outbox_events"."locked_by" IS NULL));

@@ -38,6 +38,24 @@ pnpm test:e2e
 Use `pnpm validate` for the non-browser quality gates. Playwright browsers must be installed once with
 `pnpm exec playwright install` before running end-to-end tests locally.
 
+## Database foundation
+
+Phase 1 database commands use the connection variables documented in `.env.example`:
+
+```bash
+corepack pnpm db:generate
+corepack pnpm db:migrate
+corepack pnpm db:seed
+corepack pnpm db:provision-owner --identity-id UUID --reason "approved reason"
+```
+
+Review [`docs/operations/database.md`](docs/operations/database.md) before applying a migration or
+seeding reference authorization data.
+
+Staff bootstrap and worker operations are documented in
+[`docs/operations/staff-access.md`](docs/operations/staff-access.md) and
+[`docs/operations/outbox-worker.md`](docs/operations/outbox-worker.md).
+
 ## Repository guidance
 
 Read `AGENTS.md` before changing the application. It routes work to the relevant sections of the

@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+
+# Next.js output
+.next/
+out/
+
+# Test output
+coverage/
+playwright-report/
+test-results/
+
+# Local environment files
+.env
+.env.local
+.env.*.local
+
+# Logs and operating-system files
+*.log
+.DS_Store
+
+# Tool caches
+.turbo/
+.eslintcache
+*.tsbuildinfo
+
+# Vercel
+.vercel/
