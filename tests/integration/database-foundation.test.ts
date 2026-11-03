@@ -68,7 +68,7 @@ describe.skipIf(testDatabaseUrl === undefined)("phase 1 database foundation", ()
         .update(auditLogs)
         .set({ reason: "mutation must fail" })
         .where(eq(auditLogs.id, auditLog?.id ?? "")),
-    ).rejects.toMatchObject({ code: "55000" });
+    ).rejects.toMatchObject({ cause: { code: "55000" } });
   });
 
   it("rejects processing events without an atomic worker lease", async () => {
@@ -81,7 +81,7 @@ describe.skipIf(testDatabaseUrl === undefined)("phase 1 database foundation", ()
         status: "processing",
         topic: "phase1.test",
       }),
-    ).rejects.toMatchObject({ code: "23514" });
+    ).rejects.toMatchObject({ cause: { code: "23514" } });
   });
 
   it("lets overlapping workers claim different events", async () => {
