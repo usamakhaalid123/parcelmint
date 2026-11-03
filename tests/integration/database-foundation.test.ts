@@ -10,8 +10,11 @@ import type { getDatabase } from "@/db/client";
 import * as schema from "@/db/schema";
 import {
   auditLogs,
+  inventoryItems,
+  inventoryMovements,
   outboxEvents,
   permissions,
+  products,
   rolePermissions,
   roles,
   userRoles,
@@ -21,6 +24,10 @@ import { seedAuthorizationReferenceData } from "@/db/seed-reference-data";
 import { AuthorizationDeniedError, type StaffPrincipal } from "@/modules/auth";
 import { provisionInitialOwner } from "@/modules/auth/server/owner-provisioning";
 import { assignRole } from "@/modules/auth/server/role-service";
+import { CatalogAuthorizationError, InventoryAdjustmentError } from "@/modules/catalog";
+import { catalogCsvHeaders, serializeCsv } from "@/modules/catalog/domain/catalog-csv";
+import { importCatalogCsv } from "@/modules/catalog/server/catalog-import-service";
+import { adjustInventory, createCompleteProduct } from "@/modules/catalog/server/catalog-service";
 import { claimOutboxEvents, markOutboxEventProcessed, runOutboxWorker } from "@/modules/jobs";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
@@ -246,5 +253,268 @@ describe.skipIf(testDatabaseUrl === undefined)("phase 1 database foundation", ()
       lastErrorCode: "handler_failed",
       status: "pending",
     });
+  });
+
+  it("creates a complete variant product and immutable initial stock movement", async () => {
+    const [actor] = await database
+      .insert(users)
+      .values({ accountType: "staff", identityId: randomUUID() })
+      .returning({ id: users.id });
+    expect(actor).toBeDefined();
+
+    const principal: StaffPrincipal = {
+      accountType: "staff",
+      permissionKeys: new Set(["catalog.manage", "inventory.adjust"]),
+      status: "active",
+      userId: actor?.id ?? "",
+    };
+    const correlationId = randomUUID();
+    const created = await createCompleteProduct(
+      {
+        actor: principal,
+        basePriceMinor: 12_500,
+        brand: { name: "Phase Two Brand", slug: `phase-two-brand-${randomUUID()}` },
+        categories: [{ name: "Integration Category", slug: `category-${randomUUID()}` }],
+        correlationId,
+        currencyCode: "PKR",
+        description: "Integration product",
+        initialQuantity: 8,
+        inventoryReason: "Initial integration stock",
+        lowStockThreshold: 2,
+        name: "Integration Variant Product",
+        optionValues: [{ name: "Color", value: "Green" }],
+        slug: `integration-product-${randomUUID()}`,
+        status: "active",
+        variant: {
+          isActive: true,
+          sku: `phase2-${randomUUID()}`,
+          stockBehavior: "tracked",
+          title: "Green",
+        },
+      },
+      database,
+    );
+
+    const [item] = await database
+      .select({ onHandQuantity: inventoryItems.onHandQuantity })
+      .from(inventoryItems)
+      .where(eq(inventoryItems.id, created.inventoryItemId));
+    const [movement] = await database
+      .select({ delta: inventoryMovements.quantityDelta })
+      .from(inventoryMovements)
+      .where(eq(inventoryMovements.inventoryItemId, created.inventoryItemId));
+    const [audit] = await database
+      .select({ outcome: auditLogs.outcome })
+      .from(auditLogs)
+      .where(eq(auditLogs.correlationId, correlationId));
+
+    expect(item?.onHandQuantity).toBe(8);
+    expect(movement?.delta).toBe(8);
+    expect(audit?.outcome).toBe("success");
+    await expect(
+      database
+        .update(inventoryMovements)
+        .set({ reason: "history must remain immutable" })
+        .where(eq(inventoryMovements.inventoryItemId, created.inventoryItemId)),
+    ).rejects.toMatchObject({ cause: { code: "55000" } });
+  });
+
+  it("default-denies catalog creation and audits the denied attempt", async () => {
+    const [actor] = await database
+      .insert(users)
+      .values({ accountType: "staff", identityId: randomUUID() })
+      .returning({ id: users.id });
+    const correlationId = randomUUID();
+    const slug = `denied-product-${randomUUID()}`;
+
+    await expect(
+      createCompleteProduct(
+        {
+          actor: {
+            accountType: "staff",
+            permissionKeys: new Set(),
+            status: "active",
+            userId: actor?.id ?? "",
+          },
+          basePriceMinor: 100,
+          categories: [],
+          correlationId,
+          currencyCode: "PKR",
+          initialQuantity: 0,
+          inventoryReason: "Denied creation attempt",
+          lowStockThreshold: 0,
+          name: "Denied product",
+          optionValues: [],
+          slug,
+          status: "draft",
+          variant: {
+            isActive: true,
+            sku: `denied-${randomUUID()}`,
+            stockBehavior: "tracked",
+            title: "Default",
+          },
+        },
+        database,
+      ),
+    ).rejects.toBeInstanceOf(CatalogAuthorizationError);
+
+    const [product] = await database
+      .select({ id: products.id })
+      .from(products)
+      .where(eq(products.slug, slug));
+    const [audit] = await database
+      .select({ outcome: auditLogs.outcome })
+      .from(auditLogs)
+      .where(eq(auditLogs.correlationId, correlationId));
+    expect(product).toBeUndefined();
+    expect(audit?.outcome).toBe("denied");
+  });
+
+  it("adjusts stock atomically and rejects negative inventory with an audit record", async () => {
+    const [actor] = await database
+      .insert(users)
+      .values({ accountType: "staff", identityId: randomUUID() })
+      .returning({ id: users.id });
+    const principal: StaffPrincipal = {
+      accountType: "staff",
+      permissionKeys: new Set(["catalog.manage", "inventory.adjust"]),
+      status: "active",
+      userId: actor?.id ?? "",
+    };
+    const created = await createCompleteProduct(
+      {
+        actor: principal,
+        basePriceMinor: 500,
+        categories: [],
+        correlationId: randomUUID(),
+        currencyCode: "PKR",
+        initialQuantity: 3,
+        inventoryReason: "Initial adjustment test stock",
+        lowStockThreshold: 1,
+        name: "Adjustment product",
+        optionValues: [],
+        slug: `adjustment-product-${randomUUID()}`,
+        status: "draft",
+        variant: {
+          isActive: true,
+          sku: `adjust-${randomUUID()}`,
+          stockBehavior: "tracked",
+          title: "Default",
+        },
+      },
+      database,
+    );
+
+    await expect(
+      adjustInventory(
+        {
+          actor: principal,
+          correlationId: randomUUID(),
+          delta: -4,
+          inventoryItemId: created.inventoryItemId,
+          reason: "Invalid negative adjustment",
+        },
+        database,
+      ),
+    ).rejects.toBeInstanceOf(InventoryAdjustmentError);
+    const adjusted = await adjustInventory(
+      {
+        actor: principal,
+        correlationId: randomUUID(),
+        delta: 2,
+        inventoryItemId: created.inventoryItemId,
+        reason: "Counted two additional units",
+      },
+      database,
+    );
+
+    expect(adjusted.onHandQuantity).toBe(5);
+    const failures = await database
+      .select({ outcome: auditLogs.outcome })
+      .from(auditLogs)
+      .where(
+        and(
+          eq(auditLogs.action, "inventory.adjust"),
+          eq(auditLogs.resourceId, created.inventoryItemId),
+          eq(auditLogs.outcome, "failure"),
+        ),
+      );
+    expect(failures).toHaveLength(1);
+  });
+
+  it("rolls back the entire CSV import when a later row conflicts", async () => {
+    const [actor] = await database
+      .insert(users)
+      .values({ accountType: "staff", identityId: randomUUID() })
+      .returning({ id: users.id });
+    const principal: StaffPrincipal = {
+      accountType: "staff",
+      permissionKeys: new Set(["catalog.manage", "inventory.adjust"]),
+      status: "active",
+      userId: actor?.id ?? "",
+    };
+    const conflictingSku = `CSV-CONFLICT-${randomUUID()}`;
+    await createCompleteProduct(
+      {
+        actor: principal,
+        basePriceMinor: 100,
+        categories: [],
+        correlationId: randomUUID(),
+        currencyCode: "PKR",
+        initialQuantity: 0,
+        inventoryReason: "Existing catalog row",
+        lowStockThreshold: 0,
+        name: "Existing CSV conflict",
+        optionValues: [],
+        slug: `existing-csv-${randomUUID()}`,
+        status: "draft",
+        variant: {
+          isActive: true,
+          sku: conflictingSku,
+          stockBehavior: "tracked",
+          title: "Default",
+        },
+      },
+      database,
+    );
+
+    const firstSlug = `csv-rollback-${randomUUID()}`;
+    const row = (name: string, slug: string, sku: string) =>
+      [
+        name,
+        slug,
+        "",
+        "draft",
+        "PKR",
+        100,
+        "",
+        "",
+        "",
+        "",
+        "Default",
+        sku,
+        null,
+        "tracked",
+        0,
+        0,
+        "",
+        "",
+        "Validated CSV stock",
+      ] as const;
+    const csvText = serializeCsv([
+      catalogCsvHeaders,
+      row("First valid row", firstSlug, `CSV-VALID-${randomUUID()}`),
+      row("Conflicting row", `csv-conflict-${randomUUID()}`, conflictingSku),
+    ]);
+
+    await expect(
+      importCatalogCsv({ actor: principal, correlationId: randomUUID(), csvText }, database),
+    ).rejects.toBeInstanceOf(Error);
+
+    const [rolledBackProduct] = await database
+      .select({ id: products.id })
+      .from(products)
+      .where(eq(products.slug, firstSlug));
+    expect(rolledBackProduct).toBeUndefined();
   });
 });

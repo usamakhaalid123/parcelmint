@@ -56,6 +56,9 @@ Staff bootstrap and worker operations are documented in
 [`docs/operations/staff-access.md`](docs/operations/staff-access.md) and
 [`docs/operations/outbox-worker.md`](docs/operations/outbox-worker.md).
 
+Catalog, inventory, product-image storage, and CSV operations are documented in
+[`docs/operations/catalog.md`](docs/operations/catalog.md).
+
 ## Repository guidance
 
 Read `AGENTS.md` before changing the application. It routes work to the relevant sections of the

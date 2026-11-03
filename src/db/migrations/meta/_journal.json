@@ -22,6 +22,20 @@
       "when": 1793627009997,
       "tag": "0002_protect_audit_logs",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1793707191604,
+      "tag": "0003_mighty_the_hand",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1793707201161,
+      "tag": "0004_protect_inventory_movements",
+      "breakpoints": true
     }
   ]
 }
