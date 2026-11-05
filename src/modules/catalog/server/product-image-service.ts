@@ -147,6 +147,25 @@ export async function downloadProductImage(
   };
 }
 
+export async function downloadPublishedProductImage(
+  imageIdInput: string,
+  database: ReturnType<typeof getDatabase> = getDatabase(),
+  storage?: ProductImageStorage,
+): Promise<{ body: Blob; contentType: string }> {
+  const imageId = z.string().uuid().parse(imageIdInput);
+  const [image] = await database
+    .select({ storageKey: productImages.storageKey })
+    .from(productImages)
+    .innerJoin(products, eq(products.id, productImages.productId))
+    .where(and(eq(productImages.id, imageId), eq(products.status, "active")))
+    .limit(1);
+  if (image === undefined) throw new CatalogReferenceNotFoundError("product_image");
+
+  const body = await (storage ?? createProductImageStorage()).download(image.storageKey);
+  if (body === null) throw new ProductImageReadError();
+  return { body, contentType: body.type || "application/octet-stream" };
+}
+
 export async function uploadProductImage(
   input: {
     actor: StaffPrincipal | null;

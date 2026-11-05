@@ -59,6 +59,9 @@ Staff bootstrap and worker operations are documented in
 Catalog, inventory, product-image storage, and CSV operations are documented in
 [`docs/operations/catalog.md`](docs/operations/catalog.md).
 
+Public catalog discovery, storefront caching, indexing rules, and browser-test isolation are
+documented in [`docs/operations/storefront.md`](docs/operations/storefront.md).
+
 ## Repository guidance
 
 Read `AGENTS.md` before changing the application. It routes work to the relevant sections of the

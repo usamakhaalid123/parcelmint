@@ -6,10 +6,20 @@ test("renders the accessible foundation page", async ({ page }) => {
   await expect(
     page.getByRole("heading", {
       level: 1,
-      name: "Commerce that stays clear from order to reconciliation.",
+      name: "Find what you need. Pay when it arrives.",
     }),
   ).toBeVisible();
   await expect(page.getByRole("link", { name: "Skip to main content" })).toBeAttached();
+});
+
+test("renders the public catalog empty state accessibly", async ({ page }) => {
+  await page.goto("/products?query=guaranteed-no-match-browser-test");
+
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Find your next essential." }),
+  ).toBeVisible();
+  await expect(page.getByRole("heading", { level: 2, name: "No products match." })).toBeVisible();
+  await expect(page.getByRole("searchbox", { name: "Search" })).toBeVisible();
 });
 
 test("exposes a non-cacheable health endpoint", async ({ request }) => {

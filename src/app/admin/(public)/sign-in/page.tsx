@@ -1,6 +1,9 @@
+import type { Metadata } from "next";
+
 import { signInStaff } from "@/modules/auth/server/sign-in";
 
 export const dynamic = "force-dynamic";
+export const metadata: Metadata = { robots: { follow: false, index: false } };
 
 const safeErrors: Readonly<Record<string, string>> = {
   access_denied: "This account does not have staff access.",

@@ -1,10 +1,12 @@
 import type { ReactNode } from "react";
+import type { Metadata } from "next";
 import Link from "next/link";
 
 import { requirePermission } from "@/modules/auth/server/require-permission";
 import { signOut } from "@/modules/auth/server/sign-out";
 
 export const dynamic = "force-dynamic";
+export const metadata: Metadata = { robots: { follow: false, index: false } };
 
 export default async function ProtectedAdminLayout({ children }: { children: ReactNode }) {
   await requirePermission("admin.access");

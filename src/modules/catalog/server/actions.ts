@@ -2,7 +2,7 @@
 
 import { randomUUID } from "node:crypto";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 
@@ -77,6 +77,11 @@ function safeActionError(error: unknown): string {
   return "operation_failed";
 }
 
+function revalidateCatalogPath(path: string): void {
+  revalidatePath(path);
+  revalidateTag("storefront-catalog", "max");
+}
+
 export type CatalogImportState =
   | { status: "idle" }
   | { importedProducts: number; status: "success" }
@@ -105,7 +110,7 @@ export async function importCatalogCsvAction(
       correlationId,
       csvText: await file.text(),
     });
-    revalidatePath("/admin/catalog");
+    revalidateCatalogPath("/admin/catalog");
     return { importedProducts: result.importedProducts, status: "success" };
   } catch (error) {
     if (error instanceof CatalogCsvValidationError) {
@@ -185,7 +190,7 @@ export async function createProductAction(formData: FormData): Promise<never> {
     redirect(`/admin/catalog/new?error=${safeActionError(error)}`);
   }
 
-  revalidatePath("/admin/catalog");
+  revalidateCatalogPath("/admin/catalog");
   redirect(`/admin/catalog/${productId}?notice=created`);
 }
 
@@ -225,7 +230,7 @@ export async function addVariantAction(formData: FormData): Promise<never> {
     redirect(`/admin/catalog/${productId}?error=${safeActionError(error)}`);
   }
 
-  revalidatePath(`/admin/catalog/${productId}`);
+  revalidateCatalogPath(`/admin/catalog/${productId}`);
   redirect(`/admin/catalog/${productId}?notice=variant-created`);
 }
 
@@ -249,7 +254,7 @@ export async function adjustInventoryAction(formData: FormData): Promise<never> 
     redirect(`/admin/catalog/${productId}?error=${safeActionError(error)}`);
   }
 
-  revalidatePath(`/admin/catalog/${productId}`);
+  revalidateCatalogPath(`/admin/catalog/${productId}`);
   redirect(`/admin/catalog/${productId}?notice=stock-adjusted`);
 }
 
@@ -273,8 +278,8 @@ export async function changeProductStatusAction(formData: FormData): Promise<nev
     redirect(`/admin/catalog/${productId}?error=${safeActionError(error)}`);
   }
 
-  revalidatePath("/admin/catalog");
-  revalidatePath(`/admin/catalog/${productId}`);
+  revalidateCatalogPath("/admin/catalog");
+  revalidateCatalogPath(`/admin/catalog/${productId}`);
   redirect(`/admin/catalog/${productId}?notice=status-updated`);
 }
 
@@ -299,7 +304,7 @@ export async function uploadProductImageAction(formData: FormData): Promise<neve
     redirect(`/admin/catalog/${productId}?error=${errorCode}`);
   }
 
-  revalidatePath(`/admin/catalog/${productId}`);
+  revalidateCatalogPath(`/admin/catalog/${productId}`);
   redirect(`/admin/catalog/${productId}?notice=image-uploaded`);
 }
 
@@ -328,8 +333,8 @@ export async function updateProductAction(formData: FormData): Promise<never> {
     redirect(`/admin/catalog/${productId}?error=${safeActionError(error)}`);
   }
 
-  revalidatePath("/admin/catalog");
-  revalidatePath(`/admin/catalog/${productId}`);
+  revalidateCatalogPath("/admin/catalog");
+  revalidateCatalogPath(`/admin/catalog/${productId}`);
   redirect(`/admin/catalog/${productId}?notice=product-updated`);
 }
 
@@ -363,7 +368,7 @@ export async function updateProductVariantAction(formData: FormData): Promise<ne
     redirect(`/admin/catalog/${productId}?error=${safeActionError(error)}`);
   }
 
-  revalidatePath(`/admin/catalog/${productId}`);
+  revalidateCatalogPath(`/admin/catalog/${productId}`);
   redirect(`/admin/catalog/${productId}?notice=variant-updated`);
 }
 
@@ -389,8 +394,8 @@ export async function updateProductOrganizationAction(formData: FormData): Promi
     logger.warn("Product organization update failed", { correlationId, error, productId });
     redirect(`/admin/catalog/${productId}?error=${safeActionError(error)}`);
   }
-  revalidatePath("/admin/catalog");
-  revalidatePath(`/admin/catalog/${productId}`);
+  revalidateCatalogPath("/admin/catalog");
+  revalidateCatalogPath(`/admin/catalog/${productId}`);
   redirect(`/admin/catalog/${productId}?notice=product-organization-updated`);
 }
 
@@ -411,7 +416,7 @@ export async function createBrandAction(formData: FormData): Promise<never> {
     logger.warn("Catalog brand creation failed", { correlationId, error });
     redirect(`/admin/catalog/organization?error=${safeActionError(error)}`);
   }
-  revalidatePath("/admin/catalog/organization");
+  revalidateCatalogPath("/admin/catalog/organization");
   redirect("/admin/catalog/organization?notice=brand-created");
 }
 
@@ -436,7 +441,7 @@ export async function createCategoryAction(formData: FormData): Promise<never> {
     logger.warn("Catalog category creation failed", { correlationId, error });
     redirect(`/admin/catalog/organization?error=${safeActionError(error)}`);
   }
-  revalidatePath("/admin/catalog/organization");
+  revalidateCatalogPath("/admin/catalog/organization");
   redirect("/admin/catalog/organization?notice=category-created");
 }
 
@@ -462,7 +467,7 @@ async function changeOrganizationArchiveState(
     });
     redirect(`/admin/catalog/organization?error=${safeActionError(error)}`);
   }
-  revalidatePath("/admin/catalog/organization");
+  revalidateCatalogPath("/admin/catalog/organization");
   redirect(`/admin/catalog/organization?notice=${resourceType}-updated`);
 }
 
@@ -495,7 +500,7 @@ export async function setPrimaryProductImageAction(formData: FormData): Promise<
     logger.warn("Set primary product image failed", { correlationId, error, productId });
     redirect(`/admin/catalog/${productId}?error=${safeActionError(error)}`);
   }
-  revalidatePath(`/admin/catalog/${productId}`);
+  revalidateCatalogPath(`/admin/catalog/${productId}`);
   redirect(`/admin/catalog/${productId}?notice=image-primary-updated`);
 }
 
@@ -516,7 +521,7 @@ export async function reorderProductImageAction(formData: FormData): Promise<nev
     logger.warn("Product image reorder failed", { correlationId, error, productId });
     redirect(`/admin/catalog/${productId}?error=${safeActionError(error)}`);
   }
-  revalidatePath(`/admin/catalog/${productId}`);
+  revalidateCatalogPath(`/admin/catalog/${productId}`);
   redirect(`/admin/catalog/${productId}?notice=image-reordered`);
 }
 
@@ -535,6 +540,6 @@ export async function deleteProductImageAction(formData: FormData): Promise<neve
       error instanceof ProductImageMutationError ? error.reason : safeActionError(error);
     redirect(`/admin/catalog/${productId}?error=${errorCode}`);
   }
-  revalidatePath(`/admin/catalog/${productId}`);
+  revalidateCatalogPath(`/admin/catalog/${productId}`);
   redirect(`/admin/catalog/${productId}?notice=image-deleted`);
 }

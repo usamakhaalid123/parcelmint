@@ -51,6 +51,10 @@ import {
   uploadProductImage,
 } from "@/modules/catalog/server/product-image-service";
 import { claimOutboxEvents, markOutboxEventProcessed, runOutboxWorker } from "@/modules/jobs";
+import {
+  getStorefrontProduct,
+  listStorefrontProducts,
+} from "@/modules/storefront/server/storefront-repository";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 
@@ -852,5 +856,79 @@ describe.skipIf(testDatabaseUrl === undefined)("phase 1 database foundation", ()
       .where(eq(productImages.productId, created.productId));
     expect(remaining).toEqual([{ id: first.imageId, isPrimary: true }]);
     expect(storedObjects.size).toBe(1);
+  });
+
+  it("publishes only active catalog products through searchable storefront queries", async () => {
+    const [actor] = await database
+      .insert(users)
+      .values({ accountType: "staff", identityId: randomUUID() })
+      .returning({ id: users.id });
+    const principal: StaffPrincipal = {
+      accountType: "staff",
+      permissionKeys: new Set(["catalog.manage", "inventory.adjust"]),
+      status: "active",
+      userId: actor?.id ?? "",
+    };
+    const token = randomUUID();
+    const activeSlug = `storefront-active-${token}`;
+    await createCompleteProduct(
+      {
+        actor: principal,
+        basePriceMinor: 25_000,
+        categories: [{ name: `Storefront category ${token}`, slug: `storefront-${token}` }],
+        correlationId: randomUUID(),
+        currencyCode: "PKR",
+        description: `Searchable storefront product ${token}`,
+        initialQuantity: 4,
+        inventoryReason: "Verified storefront opening stock",
+        lowStockThreshold: 1,
+        name: `Published storefront product ${token}`,
+        optionValues: [],
+        slug: activeSlug,
+        status: "active",
+        variant: {
+          isActive: true,
+          sku: `STORE-${token}`,
+          stockBehavior: "tracked",
+          title: "Default",
+        },
+      },
+      database,
+    );
+    await createCompleteProduct(
+      {
+        actor: principal,
+        basePriceMinor: 10_000,
+        categories: [],
+        correlationId: randomUUID(),
+        currencyCode: "PKR",
+        description: `Searchable storefront product ${token}`,
+        initialQuantity: 2,
+        inventoryReason: "Draft product stock",
+        lowStockThreshold: 0,
+        name: `Draft storefront product ${token}`,
+        optionValues: [],
+        slug: `storefront-draft-${token}`,
+        status: "draft",
+        variant: {
+          isActive: true,
+          sku: `DRAFT-${token}`,
+          stockBehavior: "tracked",
+          title: "Default",
+        },
+      },
+      database,
+    );
+
+    const page = await listStorefrontProducts(
+      { availability: "in_stock", page: 1, query: token, sort: "price_asc" },
+      database,
+    );
+    const detail = await getStorefrontProduct(activeSlug, database);
+
+    expect(page.total).toBe(1);
+    expect(page.items[0]).toMatchObject({ available: true, slug: activeSlug });
+    expect(detail).toMatchObject({ slug: activeSlug });
+    expect(await getStorefrontProduct(`storefront-draft-${token}`, database)).toBeNull();
   });
 });
