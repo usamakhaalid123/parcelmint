@@ -23,6 +23,12 @@ export default defineConfig({
   ],
   webServer: {
     command: `corepack pnpm dev --hostname 127.0.0.1 --port ${e2ePort}`,
+    env: {
+      DEPLOYMENT_ENV: "local",
+      NEXT_PUBLIC_APP_URL: e2eBaseUrl,
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: "playwright-anonymous-test-key",
+      NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:54321",
+    },
     url: `${e2eBaseUrl}/api/v1/health`,
     reuseExistingServer: false,
     timeout: 120_000,
