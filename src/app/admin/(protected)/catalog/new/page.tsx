@@ -41,7 +41,10 @@ export default async function NewProductPage({
 
       <form action={createProductAction} className={adminStyles.form}>
         <fieldset className={adminStyles.fieldset}>
-          <legend className={adminStyles.legend}>Product</legend>
+          <legend className={adminStyles.legend}>1. Product basics</legend>
+          <p className="mb-4 text-sm text-[var(--muted)]">
+            Set the customer-facing name, price, currency, and starting lifecycle state.
+          </p>
           <div className={adminStyles.formGrid}>
             <label className={adminStyles.label}>
               Product name
@@ -75,6 +78,9 @@ export default async function NewProductPage({
                 step={1}
                 type="number"
               />
+              <span className={adminStyles.optional}>
+                Enter an integer in the currency&apos;s smallest unit.
+              </span>
             </label>
             <label className={adminStyles.label}>
               ISO currency code
@@ -98,7 +104,10 @@ export default async function NewProductPage({
         </fieldset>
 
         <fieldset className={adminStyles.fieldset}>
-          <legend className={adminStyles.legend}>Organization</legend>
+          <legend className={adminStyles.legend}>2. Organization</legend>
+          <p className="mb-4 text-sm text-[var(--muted)]">
+            Optional. Existing slugs are reused so you do not create duplicates.
+          </p>
           <div className={adminStyles.formGrid}>
             <label className={adminStyles.label}>
               Brand name <span className={adminStyles.optional}>(optional)</span>
@@ -130,7 +139,10 @@ export default async function NewProductPage({
         </fieldset>
 
         <fieldset className={adminStyles.fieldset}>
-          <legend className={adminStyles.legend}>First variant</legend>
+          <legend className={adminStyles.legend}>3. First variant</legend>
+          <p className="mb-4 text-sm text-[var(--muted)]">
+            Every product starts with at least one sellable SKU.
+          </p>
           <div className={adminStyles.formGrid}>
             <label className={adminStyles.label}>
               Variant title
@@ -227,7 +239,10 @@ export default async function NewProductPage({
         </fieldset>
 
         <fieldset className={adminStyles.fieldset}>
-          <legend className={adminStyles.legend}>Opening inventory</legend>
+          <legend className={adminStyles.legend}>4. Opening inventory</legend>
+          <p className="mb-4 text-sm text-[var(--muted)]">
+            Enter the verified opening count. Every later change will appear in stock history.
+          </p>
           <div className={adminStyles.formGrid}>
             <label className={adminStyles.label}>
               On-hand quantity
@@ -267,7 +282,7 @@ export default async function NewProductPage({
           </div>
         </fieldset>
 
-        <div className="flex items-center gap-3">
+        <div className="sticky bottom-0 z-10 flex items-center gap-3 rounded-2xl border border-[var(--border)] bg-[rgb(247_245_239_/_94%)] p-3 shadow-[var(--shadow-card)] backdrop-blur-md">
           <button className={adminStyles.primaryAction} type="submit">
             Create product
           </button>

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import { getProductStorageBucket } from "@/config/storage-env";
@@ -12,12 +12,45 @@ import {
   CatalogAuthorizationError,
   CatalogReferenceNotFoundError,
 } from "@/modules/catalog/domain/errors";
+import {
+  productImageMutationSchema,
+  productImageReorderSchema,
+} from "@/modules/catalog/schemas/catalog-input";
 
 const allowedImageTypes = {
   "image/jpeg": "jpg",
   "image/png": "png",
   "image/webp": "webp",
 } as const;
+
+export type ProductImageStorage = {
+  download(storageKey: string): Promise<Blob | null>;
+  remove(storageKey: string): Promise<boolean>;
+  upload(input: { bytes: Uint8Array; contentType: string; storageKey: string }): Promise<boolean>;
+};
+
+function createProductImageStorage(): ProductImageStorage {
+  const bucket = getProductStorageBucket();
+  const storage = createSupabaseAdminClient().storage.from(bucket);
+  return {
+    async download(storageKey) {
+      const { data, error } = await storage.download(storageKey);
+      return error === null ? data : null;
+    },
+    async remove(storageKey) {
+      const { error } = await storage.remove([storageKey]);
+      return error === null;
+    },
+    async upload({ bytes, contentType, storageKey }) {
+      const { error } = await storage.upload(storageKey, bytes, {
+        cacheControl: "31536000",
+        contentType,
+        upsert: false,
+      });
+      return error === null;
+    },
+  };
+}
 
 function getImageExtension(contentType: string): "jpg" | "png" | "webp" | undefined {
   if (contentType === "image/jpeg") return allowedImageTypes[contentType];
@@ -60,9 +93,39 @@ export class ProductImageReadError extends Error {
   }
 }
 
+export class ProductImageMutationError extends Error {
+  constructor(readonly reason: "storage_failed") {
+    super("The product image could not be changed.");
+    this.name = "ProductImageMutationError";
+  }
+}
+
+async function requireImageManager(input: {
+  actor: StaffPrincipal | null;
+  correlationId: string;
+  database: ReturnType<typeof getDatabase>;
+  imageId: string;
+  productId: string;
+}): Promise<StaffPrincipal> {
+  const decision = authorizePermission(input.actor, "catalog.manage");
+  if (decision.allowed) return decision.principal;
+
+  await input.database.insert(auditLogs).values({
+    action: "catalog.image.manage",
+    actorUserId: input.actor?.userId,
+    correlationId: input.correlationId,
+    outcome: "denied",
+    reason: decision.reason,
+    resourceId: input.imageId,
+    resourceType: "product_image",
+  });
+  throw new CatalogAuthorizationError();
+}
+
 export async function downloadProductImage(
   input: { actor: StaffPrincipal | null; imageId: string },
   database: ReturnType<typeof getDatabase> = getDatabase(),
+  storage?: ProductImageStorage,
 ): Promise<{ body: Blob; contentType: string }> {
   const imageId = z.string().uuid().parse(input.imageId);
   const decision = authorizePermission(input.actor, "admin.access");
@@ -75,14 +138,12 @@ export async function downloadProductImage(
     .limit(1);
   if (image === undefined) throw new CatalogReferenceNotFoundError("product_image");
 
-  const { data, error } = await createSupabaseAdminClient()
-    .storage.from(getProductStorageBucket())
-    .download(image.storageKey);
-  if (error !== null || data === null) throw new ProductImageReadError();
+  const body = await (storage ?? createProductImageStorage()).download(image.storageKey);
+  if (body === null) throw new ProductImageReadError();
 
   return {
-    body: data,
-    contentType: data.type || "application/octet-stream",
+    body,
+    contentType: body.type || "application/octet-stream",
   };
 }
 
@@ -96,6 +157,7 @@ export async function uploadProductImage(
     productId: string;
   },
   database: ReturnType<typeof getDatabase> = getDatabase(),
+  storage?: ProductImageStorage,
 ): Promise<{ imageId: string }> {
   const productId = z.string().uuid().parse(input.productId);
   const correlationId = z.string().uuid().parse(input.correlationId);
@@ -131,24 +193,29 @@ export async function uploadProductImage(
     .limit(1);
   if (product === undefined) throw new CatalogReferenceNotFoundError("product");
 
-  const bucket = getProductStorageBucket();
   const storageKey = `products/${productId}/${randomUUID()}.${extension}`;
-  const supabase = createSupabaseAdminClient();
-  const { error: uploadError } = await supabase.storage.from(bucket).upload(storageKey, bytes, {
-    cacheControl: "31536000",
+  const imageStorage = storage ?? createProductImageStorage();
+  const uploaded = await imageStorage.upload({
+    bytes,
     contentType: input.file.type,
-    upsert: false,
+    storageKey,
   });
-  if (uploadError !== null) throw new ProductImageUploadError("storage_failed");
+  if (!uploaded) throw new ProductImageUploadError("storage_failed");
 
   try {
     return await database.transaction(async (transaction) => {
+      await transaction
+        .select({ id: products.id })
+        .from(products)
+        .where(eq(products.id, productId))
+        .for("update");
       const [nextPosition] = await transaction
         .select({ value: sql<number>`coalesce(max(${productImages.position}), -1) + 1` })
         .from(productImages)
         .where(eq(productImages.productId, productId));
 
-      if (input.isPrimary) {
+      const isPrimary = input.isPrimary || (nextPosition?.value ?? 0) === 0;
+      if (isPrimary) {
         await transaction
           .update(productImages)
           .set({ isPrimary: false })
@@ -159,7 +226,7 @@ export async function uploadProductImage(
         .insert(productImages)
         .values({
           altText,
-          isPrimary: input.isPrimary,
+          isPrimary,
           position: nextPosition?.value ?? 0,
           productId,
           storageKey,
@@ -171,7 +238,7 @@ export async function uploadProductImage(
         action: "catalog.image.upload",
         actorUserId: decision.principal.userId,
         correlationId,
-        metadata: { isPrimary: input.isPrimary },
+        metadata: { isPrimary },
         outcome: "success",
         resourceId: image.id,
         resourceType: "product_image",
@@ -179,7 +246,159 @@ export async function uploadProductImage(
       return { imageId: image.id };
     });
   } catch (error) {
-    await supabase.storage.from(bucket).remove([storageKey]);
+    await imageStorage.remove(storageKey);
     throw error;
   }
+}
+
+export async function setPrimaryProductImage(
+  input: z.input<typeof productImageMutationSchema> & {
+    actor: StaffPrincipal | null;
+    correlationId: string;
+  },
+  database: ReturnType<typeof getDatabase> = getDatabase(),
+): Promise<void> {
+  const values = productImageMutationSchema.parse(input);
+  const correlationId = z.string().uuid().parse(input.correlationId);
+  const actor = await requireImageManager({
+    ...values,
+    actor: input.actor,
+    correlationId,
+    database,
+  });
+
+  await database.transaction(async (transaction) => {
+    const [image] = await transaction
+      .select({ id: productImages.id })
+      .from(productImages)
+      .where(
+        and(eq(productImages.id, values.imageId), eq(productImages.productId, values.productId)),
+      )
+      .limit(1);
+    if (image === undefined) throw new CatalogReferenceNotFoundError("product_image");
+
+    await transaction
+      .update(productImages)
+      .set({ isPrimary: false })
+      .where(and(eq(productImages.productId, values.productId), isNull(productImages.variantId)));
+    await transaction
+      .update(productImages)
+      .set({ isPrimary: true })
+      .where(eq(productImages.id, values.imageId));
+    await transaction.insert(auditLogs).values({
+      action: "catalog.image.set_primary",
+      actorUserId: actor.userId,
+      correlationId,
+      outcome: "success",
+      reason: values.reason,
+      resourceId: values.imageId,
+      resourceType: "product_image",
+    });
+  });
+}
+
+export async function reorderProductImage(
+  input: z.input<typeof productImageReorderSchema> & {
+    actor: StaffPrincipal | null;
+    correlationId: string;
+  },
+  database: ReturnType<typeof getDatabase> = getDatabase(),
+): Promise<void> {
+  const values = productImageReorderSchema.parse(input);
+  const correlationId = z.string().uuid().parse(input.correlationId);
+  const actor = await requireImageManager({
+    ...values,
+    actor: input.actor,
+    correlationId,
+    database,
+  });
+
+  await database.transaction(async (transaction) => {
+    const images = await transaction
+      .select({ id: productImages.id, position: productImages.position })
+      .from(productImages)
+      .where(eq(productImages.productId, values.productId))
+      .orderBy(asc(productImages.position), asc(productImages.createdAt))
+      .for("update");
+    const currentIndex = images.findIndex((image) => image.id === values.imageId);
+    if (currentIndex < 0) throw new CatalogReferenceNotFoundError("product_image");
+    const targetIndex = values.direction === "up" ? currentIndex - 1 : currentIndex + 1;
+    const current = images[currentIndex];
+    const target = images[targetIndex];
+    if (current === undefined || target === undefined) return;
+
+    await transaction
+      .update(productImages)
+      .set({ position: target.position })
+      .where(eq(productImages.id, current.id));
+    await transaction
+      .update(productImages)
+      .set({ position: current.position })
+      .where(eq(productImages.id, target.id));
+    await transaction.insert(auditLogs).values({
+      action: "catalog.image.reorder",
+      actorUserId: actor.userId,
+      correlationId,
+      metadata: { direction: values.direction },
+      outcome: "success",
+      reason: values.reason,
+      resourceId: values.imageId,
+      resourceType: "product_image",
+    });
+  });
+}
+
+export async function deleteProductImage(
+  input: z.input<typeof productImageMutationSchema> & {
+    actor: StaffPrincipal | null;
+    correlationId: string;
+  },
+  database: ReturnType<typeof getDatabase> = getDatabase(),
+  storage?: ProductImageStorage,
+): Promise<void> {
+  const values = productImageMutationSchema.parse(input);
+  const correlationId = z.string().uuid().parse(input.correlationId);
+  const actor = await requireImageManager({
+    ...values,
+    actor: input.actor,
+    correlationId,
+    database,
+  });
+  const [image] = await database
+    .select({ isPrimary: productImages.isPrimary, storageKey: productImages.storageKey })
+    .from(productImages)
+    .where(and(eq(productImages.id, values.imageId), eq(productImages.productId, values.productId)))
+    .limit(1);
+  if (image === undefined) throw new CatalogReferenceNotFoundError("product_image");
+
+  if (!(await (storage ?? createProductImageStorage()).remove(image.storageKey))) {
+    throw new ProductImageMutationError("storage_failed");
+  }
+
+  await database.transaction(async (transaction) => {
+    await transaction.delete(productImages).where(eq(productImages.id, values.imageId));
+    if (image.isPrimary) {
+      const [replacement] = await transaction
+        .select({ id: productImages.id })
+        .from(productImages)
+        .where(and(eq(productImages.productId, values.productId), isNull(productImages.variantId)))
+        .orderBy(asc(productImages.position), asc(productImages.createdAt))
+        .limit(1);
+      if (replacement !== undefined) {
+        await transaction
+          .update(productImages)
+          .set({ isPrimary: true })
+          .where(eq(productImages.id, replacement.id));
+      }
+    }
+    await transaction.insert(auditLogs).values({
+      action: "catalog.image.delete",
+      actorUserId: actor.userId,
+      correlationId,
+      outcome: "success",
+      reason: values.reason,
+      resourceId: values.imageId,
+      resourceType: "product_image",
+    });
+  });
 }

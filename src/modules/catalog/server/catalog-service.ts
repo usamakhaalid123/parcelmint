@@ -1,4 +1,4 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import { getDatabase } from "@/db/client";
@@ -29,6 +29,8 @@ import {
   inventoryAdjustmentSchema,
   productStatusChangeSchema,
   updateProductSchema,
+  updateProductOrganizationSchema,
+  updateProductVariantSchema,
 } from "@/modules/catalog/schemas/catalog-input";
 
 type Database = ReturnType<typeof getDatabase>;
@@ -611,4 +613,153 @@ export async function updateProduct(
     if (isUniqueViolation(error)) throw new CatalogConflictError(uniqueConflictField(error));
     throw error;
   }
+}
+
+export async function updateProductVariant(
+  input: z.input<typeof updateProductVariantSchema> & {
+    actor: StaffPrincipal | null;
+    correlationId: string;
+  },
+  database: Database = getDatabase(),
+): Promise<{ version: number }> {
+  const values = updateProductVariantSchema.parse(input);
+  const correlationId = z.string().uuid().parse(input.correlationId);
+  const decision = authorizePermission(input.actor, "catalog.manage");
+  if (!decision.allowed) {
+    return recordDeniedOperation({
+      action: "catalog.variant.update",
+      actor: input.actor,
+      correlationId,
+      database,
+      reason: decision.reason,
+      resourceId: values.variantId,
+      resourceType: "product_variant",
+    });
+  }
+
+  const normalizedSku = normalizeSku(values.sku);
+  try {
+    return await database.transaction(async (transaction) => {
+      const [updated] = await transaction
+        .update(productVariants)
+        .set({
+          heightMillimeters: values.heightMillimeters,
+          isActive: values.isActive,
+          lengthMillimeters: values.lengthMillimeters,
+          normalizedSku,
+          priceOverrideMinor: values.priceOverrideMinor,
+          sku: normalizedSku,
+          stockBehavior: values.stockBehavior,
+          title: values.title,
+          updatedAt: new Date(),
+          version: sql`${productVariants.version} + 1`,
+          weightGrams: values.weightGrams,
+          widthMillimeters: values.widthMillimeters,
+        })
+        .where(
+          and(
+            eq(productVariants.id, values.variantId),
+            eq(productVariants.productId, values.productId),
+            eq(productVariants.version, values.version),
+          ),
+        )
+        .returning({ version: productVariants.version });
+      if (updated === undefined) throw new CatalogConcurrentModificationError();
+
+      await transaction
+        .update(inventoryItems)
+        .set({ lowStockThreshold: values.lowStockThreshold, updatedAt: new Date() })
+        .where(eq(inventoryItems.variantId, values.variantId));
+
+      await transaction.insert(auditLogs).values({
+        action: "catalog.variant.update",
+        actorUserId: decision.principal.userId,
+        correlationId,
+        metadata: { sku: normalizedSku },
+        outcome: "success",
+        reason: values.reason,
+        resourceId: values.variantId,
+        resourceType: "product_variant",
+      });
+      return updated;
+    });
+  } catch (error) {
+    if (isUniqueViolation(error)) throw new CatalogConflictError(uniqueConflictField(error));
+    throw error;
+  }
+}
+
+export async function updateProductOrganization(
+  input: z.input<typeof updateProductOrganizationSchema> & {
+    actor: StaffPrincipal | null;
+    correlationId: string;
+  },
+  database: Database = getDatabase(),
+): Promise<void> {
+  const values = updateProductOrganizationSchema.parse(input);
+  const correlationId = z.string().uuid().parse(input.correlationId);
+  const decision = authorizePermission(input.actor, "catalog.manage");
+  if (!decision.allowed) {
+    return recordDeniedOperation({
+      action: "catalog.product.organization_update",
+      actor: input.actor,
+      correlationId,
+      database,
+      reason: decision.reason,
+      resourceId: values.productId,
+      resourceType: "product",
+    });
+  }
+
+  await database.transaction(async (transaction) => {
+    if (values.brandId !== null) {
+      const [brand] = await transaction
+        .select({ id: brands.id })
+        .from(brands)
+        .where(and(eq(brands.id, values.brandId), isNull(brands.archivedAt)))
+        .limit(1);
+      if (brand === undefined) throw new CatalogReferenceNotFoundError("brand");
+    }
+    if (values.categoryIds.length > 0) {
+      const selectedCategories = await transaction
+        .select({ id: categories.id })
+        .from(categories)
+        .where(and(inArray(categories.id, values.categoryIds), isNull(categories.archivedAt)));
+      if (selectedCategories.length !== values.categoryIds.length) {
+        throw new CatalogReferenceNotFoundError("category");
+      }
+    }
+
+    const [updated] = await transaction
+      .update(products)
+      .set({
+        brandId: values.brandId,
+        updatedAt: new Date(),
+        version: sql`${products.version} + 1`,
+      })
+      .where(eq(products.id, values.productId))
+      .returning({ id: products.id });
+    if (updated === undefined) throw new CatalogReferenceNotFoundError("product");
+
+    await transaction
+      .delete(productCategories)
+      .where(eq(productCategories.productId, values.productId));
+    if (values.categoryIds.length > 0) {
+      await transaction
+        .insert(productCategories)
+        .values(
+          values.categoryIds.map((categoryId) => ({ categoryId, productId: values.productId })),
+        );
+    }
+    await transaction.insert(auditLogs).values({
+      action: "catalog.product.organization_update",
+      actorUserId: decision.principal.userId,
+      correlationId,
+      metadata: { brandId: values.brandId, categoryIds: values.categoryIds },
+      outcome: "success",
+      reason: values.reason,
+      resourceId: values.productId,
+      resourceType: "product",
+    });
+  });
 }

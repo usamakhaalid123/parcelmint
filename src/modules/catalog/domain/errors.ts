@@ -13,7 +13,9 @@ export class CatalogConflictError extends Error {
 }
 
 export class CatalogReferenceNotFoundError extends Error {
-  constructor(readonly resource: "inventory_item" | "product" | "product_image") {
+  constructor(
+    readonly resource: "brand" | "category" | "inventory_item" | "product" | "product_image",
+  ) {
     super(`The requested ${resource} does not exist.`);
     this.name = "CatalogReferenceNotFoundError";
   }

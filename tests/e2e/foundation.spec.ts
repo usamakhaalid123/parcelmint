@@ -19,3 +19,10 @@ test("exposes a non-cacheable health endpoint", async ({ request }) => {
   expect(response.headers()["cache-control"]).toBe("no-store");
   expect(await response.json()).toEqual({ environment: "local", status: "ok" });
 });
+
+test("redirects unauthenticated catalog administrators to sign in", async ({ page }) => {
+  await page.goto("/admin/catalog");
+
+  await expect(page).toHaveURL(/\/admin\/sign-in$/);
+  await expect(page.getByRole("heading", { level: 1, name: "Sign in to continue." })).toBeVisible();
+});

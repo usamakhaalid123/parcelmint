@@ -7,4 +7,4 @@ export * from "./server/catalog-repository";
 export * from "./server/catalog-import-service";
 export * from "./server/catalog-export-service";
 export * from "./server/product-image-service";
-export * from "./server/product-image-service";
+export * from "./server/catalog-organization-service";

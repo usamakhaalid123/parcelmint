@@ -1,11 +1,13 @@
-import { asc, desc, eq } from "drizzle-orm";
+import { and, asc, count, desc, eq, ilike, inArray, or } from "drizzle-orm";
 
 import { getDatabase } from "@/db/client";
 import {
   brands,
+  categories,
   inventoryItems,
   inventoryMovements,
   productImages,
+  productCategories,
   products,
   productVariants,
 } from "@/db/schema";
@@ -21,6 +23,65 @@ export type CatalogProductListItem = {
   updatedAt: Date;
   variantCount: number;
 };
+
+export type CatalogOrganization = {
+  brands: readonly {
+    archived: boolean;
+    id: string;
+    name: string;
+    slug: string;
+  }[];
+  categories: readonly {
+    archived: boolean;
+    id: string;
+    name: string;
+    parentId: string | null;
+    parentName: string | null;
+    position: number;
+    slug: string;
+  }[];
+};
+
+export async function listCatalogOrganization(
+  database: ReturnType<typeof getDatabase> = getDatabase(),
+): Promise<CatalogOrganization> {
+  const [brandRows, categoryRows] = await Promise.all([
+    database
+      .select({
+        archivedAt: brands.archivedAt,
+        id: brands.id,
+        name: brands.name,
+        slug: brands.slug,
+      })
+      .from(brands)
+      .orderBy(asc(brands.name)),
+    database
+      .select({
+        archivedAt: categories.archivedAt,
+        id: categories.id,
+        name: categories.name,
+        parentId: categories.parentId,
+        position: categories.position,
+        slug: categories.slug,
+      })
+      .from(categories)
+      .orderBy(asc(categories.position), asc(categories.name)),
+  ]);
+  const categoryNames = new Map(categoryRows.map((category) => [category.id, category.name]));
+
+  return {
+    brands: brandRows.map(({ archivedAt, ...brand }) => ({
+      ...brand,
+      archived: archivedAt !== null,
+    })),
+    categories: categoryRows.map(({ archivedAt, ...category }) => ({
+      ...category,
+      archived: archivedAt !== null,
+      parentName:
+        category.parentId === null ? null : (categoryNames.get(category.parentId) ?? null),
+    })),
+  };
+}
 
 export async function listCatalogProducts(
   database: ReturnType<typeof getDatabase> = getDatabase(),
@@ -63,11 +124,74 @@ export async function listCatalogProducts(
   return [...mapped.values()];
 }
 
+export type CatalogProductPage = {
+  items: readonly CatalogProductListItem[];
+  page: number;
+  pageCount: number;
+  total: number;
+};
+
+export async function listCatalogProductPage(
+  input: { page: number; query?: string; status?: "active" | "archived" | "draft" },
+  database: ReturnType<typeof getDatabase> = getDatabase(),
+): Promise<CatalogProductPage> {
+  const pageSize = 20;
+  const page = Math.max(1, input.page);
+  const query = input.query?.trim();
+  const condition = and(
+    input.status === undefined ? undefined : eq(products.status, input.status),
+    query === undefined || query === ""
+      ? undefined
+      : or(ilike(products.name, `%${query}%`), ilike(products.slug, `%${query}%`)),
+  );
+  const [[totalRow], productRows] = await Promise.all([
+    database.select({ value: count() }).from(products).where(condition),
+    database
+      .select({
+        basePriceMinor: products.basePriceMinor,
+        currencyCode: products.currencyCode,
+        id: products.id,
+        name: products.name,
+        slug: products.slug,
+        status: products.status,
+        updatedAt: products.updatedAt,
+      })
+      .from(products)
+      .where(condition)
+      .orderBy(desc(products.updatedAt))
+      .limit(pageSize)
+      .offset((page - 1) * pageSize),
+  ]);
+  const ids = productRows.map(({ id }) => id);
+  const variantRows =
+    ids.length === 0
+      ? []
+      : await database
+          .select({ productId: productVariants.productId, value: count() })
+          .from(productVariants)
+          .where(inArray(productVariants.productId, ids))
+          .groupBy(productVariants.productId);
+  const variantCounts = new Map(variantRows.map((row) => [row.productId, row.value]));
+  const total = totalRow?.value ?? 0;
+
+  return {
+    items: productRows.map((product) => ({
+      ...product,
+      variantCount: variantCounts.get(product.id) ?? 0,
+    })),
+    page,
+    pageCount: Math.max(1, Math.ceil(total / pageSize)),
+    total,
+  };
+}
+
 export type CatalogVariantDetail = {
   availability: "in_stock" | "low_stock" | "out_of_stock" | "untracked";
+  heightMillimeters: number | null;
   id: string;
   inventoryItemId: string;
   isActive: boolean;
+  lengthMillimeters: number | null;
   lowStockThreshold: number;
   onHandQuantity: number;
   priceOverrideMinor: number | null;
@@ -75,15 +199,26 @@ export type CatalogVariantDetail = {
   sku: string;
   stockBehavior: "tracked" | "untracked";
   title: string;
+  version: number;
+  weightGrams: number | null;
+  widthMillimeters: number | null;
 };
 
 export type CatalogProductDetail = {
   basePriceMinor: number;
   brandName: string | null;
+  brandId: string | null;
+  categoryIds: string[];
   currencyCode: string;
   description: string;
   id: string;
-  images: { altText: string; id: string; isPrimary: boolean; storageKey: string }[];
+  images: {
+    altText: string;
+    id: string;
+    isPrimary: boolean;
+    position: number;
+    storageKey: string;
+  }[];
   name: string;
   slug: string;
   status: "active" | "archived" | "draft";
@@ -99,15 +234,20 @@ export async function getCatalogProduct(
     .select({
       basePriceMinor: products.basePriceMinor,
       brandName: brands.name,
+      brandId: brands.id,
+      categoryId: productCategories.categoryId,
       currencyCode: products.currencyCode,
       description: products.description,
       id: products.id,
       imageAltText: productImages.altText,
       imageId: productImages.id,
       imageIsPrimary: productImages.isPrimary,
+      imagePosition: productImages.position,
       imageStorageKey: productImages.storageKey,
+      heightMillimeters: productVariants.heightMillimeters,
       inventoryItemId: inventoryItems.id,
       isActive: productVariants.isActive,
+      lengthMillimeters: productVariants.lengthMillimeters,
       lowStockThreshold: inventoryItems.lowStockThreshold,
       name: products.name,
       onHandQuantity: inventoryItems.onHandQuantity,
@@ -119,10 +259,14 @@ export async function getCatalogProduct(
       stockBehavior: productVariants.stockBehavior,
       variantId: productVariants.id,
       variantTitle: productVariants.title,
+      variantVersion: productVariants.version,
       version: products.version,
+      weightGrams: productVariants.weightGrams,
+      widthMillimeters: productVariants.widthMillimeters,
     })
     .from(products)
     .leftJoin(brands, eq(brands.id, products.brandId))
+    .leftJoin(productCategories, eq(productCategories.productId, products.id))
     .leftJoin(productVariants, eq(productVariants.productId, products.id))
     .leftJoin(inventoryItems, eq(inventoryItems.variantId, productVariants.id))
     .leftJoin(productImages, eq(productImages.productId, products.id))
@@ -133,21 +277,25 @@ export async function getCatalogProduct(
   if (first === undefined) return null;
 
   const variants = new Map<string, CatalogVariantDetail>();
+  const categoryIds = new Set<string>();
   const images = new Map<
     string,
-    { altText: string; id: string; isPrimary: boolean; storageKey: string }
+    { altText: string; id: string; isPrimary: boolean; position: number; storageKey: string }
   >();
   for (const row of rows) {
+    if (row.categoryId !== null) categoryIds.add(row.categoryId);
     if (
       row.imageId !== null &&
       row.imageAltText !== null &&
       row.imageIsPrimary !== null &&
+      row.imagePosition !== null &&
       row.imageStorageKey !== null
     ) {
       images.set(row.imageId, {
         altText: row.imageAltText,
         id: row.imageId,
         isPrimary: row.imageIsPrimary,
+        position: row.imagePosition,
         storageKey: row.imageStorageKey,
       });
     }
@@ -160,7 +308,8 @@ export async function getCatalogProduct(
       row.reservedQuantity === null ||
       row.sku === null ||
       row.stockBehavior === null ||
-      row.variantTitle === null
+      row.variantTitle === null ||
+      row.variantVersion === null
     ) {
       continue;
     }
@@ -174,8 +323,10 @@ export async function getCatalogProduct(
         stockBehavior: row.stockBehavior,
       }),
       id: row.variantId,
+      heightMillimeters: row.heightMillimeters,
       inventoryItemId: row.inventoryItemId,
       isActive: row.isActive,
+      lengthMillimeters: row.lengthMillimeters,
       lowStockThreshold: row.lowStockThreshold,
       onHandQuantity: row.onHandQuantity,
       priceOverrideMinor: row.priceOverrideMinor,
@@ -183,12 +334,17 @@ export async function getCatalogProduct(
       sku: row.sku,
       stockBehavior: row.stockBehavior,
       title: row.variantTitle,
+      version: row.variantVersion,
+      weightGrams: row.weightGrams,
+      widthMillimeters: row.widthMillimeters,
     });
   }
 
   return {
     basePriceMinor: first.basePriceMinor,
+    brandId: first.brandId,
     brandName: first.brandName,
+    categoryIds: [...categoryIds],
     currencyCode: first.currencyCode,
     description: first.description,
     id: first.id,

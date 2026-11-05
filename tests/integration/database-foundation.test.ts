@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { and, count, eq } from "drizzle-orm";
+import { and, asc, count, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { Pool } from "pg";
@@ -10,10 +10,15 @@ import type { getDatabase } from "@/db/client";
 import * as schema from "@/db/schema";
 import {
   auditLogs,
+  brands,
+  categories,
   inventoryItems,
   inventoryMovements,
   outboxEvents,
   permissions,
+  productCategories,
+  productImages,
+  productVariants,
   products,
   rolePermissions,
   roles,
@@ -27,7 +32,24 @@ import { assignRole } from "@/modules/auth/server/role-service";
 import { CatalogAuthorizationError, InventoryAdjustmentError } from "@/modules/catalog";
 import { catalogCsvHeaders, serializeCsv } from "@/modules/catalog/domain/catalog-csv";
 import { importCatalogCsv } from "@/modules/catalog/server/catalog-import-service";
-import { adjustInventory, createCompleteProduct } from "@/modules/catalog/server/catalog-service";
+import {
+  createBrand,
+  createCategory,
+  setCategoryArchived,
+} from "@/modules/catalog/server/catalog-organization-service";
+import {
+  adjustInventory,
+  createCompleteProduct,
+  updateProductVariant,
+  updateProductOrganization,
+} from "@/modules/catalog/server/catalog-service";
+import {
+  deleteProductImage,
+  reorderProductImage,
+  setPrimaryProductImage,
+  type ProductImageStorage,
+  uploadProductImage,
+} from "@/modules/catalog/server/product-image-service";
 import { claimOutboxEvents, markOutboxEventProcessed, runOutboxWorker } from "@/modules/jobs";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
@@ -37,9 +59,35 @@ describe.skipIf(testDatabaseUrl === undefined)("phase 1 database foundation", ()
   let database: ReturnType<typeof getDatabase>;
 
   beforeAll(async () => {
+    const databaseName = new URL(testDatabaseUrl ?? "").pathname.slice(1);
+    if (!databaseName.endsWith("_test")) {
+      throw new Error("TEST_DATABASE_URL must reference a database whose name ends in _test.");
+    }
     pool = new Pool({ connectionString: testDatabaseUrl });
     database = drizzle(pool, { schema });
     await migrate(database, { migrationsFolder: "src/db/migrations" });
+    await pool.query(`
+      TRUNCATE TABLE
+        audit_logs,
+        outbox_events,
+        inventory_movements,
+        inventory_items,
+        product_images,
+        variant_option_values,
+        product_options,
+        product_variants,
+        product_categories,
+        products,
+        categories,
+        brands,
+        role_permissions,
+        user_roles,
+        permissions,
+        roles,
+        profiles,
+        users
+      CASCADE
+    `);
     await seedAuthorizationReferenceData(database);
     await seedAuthorizationReferenceData(database);
   });
@@ -311,6 +359,53 @@ describe.skipIf(testDatabaseUrl === undefined)("phase 1 database foundation", ()
     expect(item?.onHandQuantity).toBe(8);
     expect(movement?.delta).toBe(8);
     expect(audit?.outcome).toBe("success");
+
+    const updateCorrelationId = randomUUID();
+    await updateProductVariant(
+      {
+        actor: principal,
+        correlationId: updateCorrelationId,
+        heightMillimeters: 40,
+        isActive: false,
+        lengthMillimeters: 100,
+        lowStockThreshold: 4,
+        priceOverrideMinor: 13_000,
+        productId: created.productId,
+        reason: "Update the verified variant specification",
+        sku: `phase2-updated-${randomUUID()}`,
+        stockBehavior: "tracked",
+        title: "Updated green",
+        variantId: created.variantId,
+        version: 1,
+        weightGrams: 250,
+        widthMillimeters: 60,
+      },
+      database,
+    );
+    const [updatedVariant] = await database
+      .select({
+        isActive: productVariants.isActive,
+        lowStockThreshold: inventoryItems.lowStockThreshold,
+        priceOverrideMinor: productVariants.priceOverrideMinor,
+        title: productVariants.title,
+        version: productVariants.version,
+      })
+      .from(productVariants)
+      .innerJoin(inventoryItems, eq(inventoryItems.variantId, productVariants.id))
+      .where(eq(productVariants.id, created.variantId));
+    const [updateAudit] = await database
+      .select({ outcome: auditLogs.outcome })
+      .from(auditLogs)
+      .where(eq(auditLogs.correlationId, updateCorrelationId));
+    expect(updatedVariant).toEqual({
+      isActive: false,
+      lowStockThreshold: 4,
+      priceOverrideMinor: 13_000,
+      title: "Updated green",
+      version: 2,
+    });
+    expect(updateAudit?.outcome).toBe("success");
+
     await expect(
       database
         .update(inventoryMovements)
@@ -516,5 +611,246 @@ describe.skipIf(testDatabaseUrl === undefined)("phase 1 database foundation", ()
       .from(products)
       .where(eq(products.slug, firstSlug));
     expect(rolledBackProduct).toBeUndefined();
+  });
+
+  it("manages audited brand and category hierarchy without deleting references", async () => {
+    const [actor] = await database
+      .insert(users)
+      .values({ accountType: "staff", identityId: randomUUID() })
+      .returning({ id: users.id });
+    const principal: StaffPrincipal = {
+      accountType: "staff",
+      permissionKeys: new Set(["catalog.manage"]),
+      status: "active",
+      userId: actor?.id ?? "",
+    };
+    const brandSlug = `brand-${randomUUID()}`;
+    const brand = await createBrand(
+      {
+        actor: principal,
+        correlationId: randomUUID(),
+        name: "Hierarchy Brand",
+        slug: brandSlug,
+      },
+      database,
+    );
+    const parent = await createCategory(
+      {
+        actor: principal,
+        correlationId: randomUUID(),
+        name: "Parent Category",
+        position: 0,
+        slug: `parent-${randomUUID()}`,
+      },
+      database,
+    );
+    const child = await createCategory(
+      {
+        actor: principal,
+        correlationId: randomUUID(),
+        name: "Child Category",
+        parentId: parent.categoryId,
+        position: 1,
+        slug: `child-${randomUUID()}`,
+      },
+      database,
+    );
+    const archiveCorrelationId = randomUUID();
+    await setCategoryArchived(
+      {
+        actor: principal,
+        archived: true,
+        correlationId: archiveCorrelationId,
+        reason: "Category is temporarily unavailable",
+        resourceId: child.categoryId,
+      },
+      database,
+    );
+    const product = await createCompleteProduct(
+      {
+        actor: principal,
+        basePriceMinor: 100,
+        categories: [],
+        correlationId: randomUUID(),
+        currencyCode: "PKR",
+        initialQuantity: 0,
+        inventoryReason: "No opening stock",
+        lowStockThreshold: 0,
+        name: "Organized product",
+        optionValues: [],
+        slug: `organized-${randomUUID()}`,
+        status: "draft",
+        variant: {
+          isActive: true,
+          sku: `organized-${randomUUID()}`,
+          stockBehavior: "tracked",
+          title: "Default",
+        },
+      },
+      database,
+    );
+    await updateProductOrganization(
+      {
+        actor: principal,
+        brandId: brand.brandId,
+        categoryIds: [parent.categoryId],
+        correlationId: randomUUID(),
+        productId: product.productId,
+        reason: "Assign approved catalog organization",
+      },
+      database,
+    );
+
+    const [storedBrand] = await database
+      .select({ id: brands.id })
+      .from(brands)
+      .where(eq(brands.id, brand.brandId));
+    const [storedChild] = await database
+      .select({ archivedAt: categories.archivedAt, parentId: categories.parentId })
+      .from(categories)
+      .where(eq(categories.id, child.categoryId));
+    const [audit] = await database
+      .select({ outcome: auditLogs.outcome })
+      .from(auditLogs)
+      .where(eq(auditLogs.correlationId, archiveCorrelationId));
+    const [assignment] = await database
+      .select({ brandId: products.brandId, categoryId: productCategories.categoryId })
+      .from(products)
+      .innerJoin(productCategories, eq(productCategories.productId, products.id))
+      .where(eq(products.id, product.productId));
+
+    expect(storedBrand?.id).toBe(brand.brandId);
+    expect(storedChild?.parentId).toBe(parent.categoryId);
+    expect(storedChild?.archivedAt).toBeInstanceOf(Date);
+    expect(audit?.outcome).toBe("success");
+    expect(assignment).toEqual({ brandId: brand.brandId, categoryId: parent.categoryId });
+  });
+
+  it("reorders product images and maintains exactly one primary image", async () => {
+    const [actor] = await database
+      .insert(users)
+      .values({ accountType: "staff", identityId: randomUUID() })
+      .returning({ id: users.id });
+    const principal: StaffPrincipal = {
+      accountType: "staff",
+      permissionKeys: new Set(["catalog.manage"]),
+      status: "active",
+      userId: actor?.id ?? "",
+    };
+    const created = await createCompleteProduct(
+      {
+        actor: principal,
+        basePriceMinor: 100,
+        categories: [],
+        correlationId: randomUUID(),
+        currencyCode: "PKR",
+        initialQuantity: 0,
+        inventoryReason: "No opening stock",
+        lowStockThreshold: 0,
+        name: "Image management product",
+        optionValues: [],
+        slug: `image-product-${randomUUID()}`,
+        status: "draft",
+        variant: {
+          isActive: true,
+          sku: `image-${randomUUID()}`,
+          stockBehavior: "tracked",
+          title: "Default",
+        },
+      },
+      database,
+    );
+    const storedObjects = new Set<string>();
+    const storage: ProductImageStorage = {
+      download: async () => null,
+      remove: async (storageKey) => storedObjects.delete(storageKey),
+      upload: async ({ storageKey }) => {
+        storedObjects.add(storageKey);
+        return true;
+      },
+    };
+    const pngBytes = new Uint8Array([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x00,
+    ]);
+    const first = await uploadProductImage(
+      {
+        actor: principal,
+        altText: "First image",
+        correlationId: randomUUID(),
+        file: new File([pngBytes], "first.png", { type: "image/png" }),
+        isPrimary: false,
+        productId: created.productId,
+      },
+      database,
+      storage,
+    );
+    const second = await uploadProductImage(
+      {
+        actor: principal,
+        altText: "Second image",
+        correlationId: randomUUID(),
+        file: new File([pngBytes], "second.png", { type: "image/png" }),
+        isPrimary: false,
+        productId: created.productId,
+      },
+      database,
+      storage,
+    );
+
+    const [automaticallyPrimary] = await database
+      .select({ id: productImages.id, isPrimary: productImages.isPrimary })
+      .from(productImages)
+      .where(eq(productImages.id, first.imageId));
+    expect(automaticallyPrimary?.isPrimary).toBe(true);
+
+    await reorderProductImage(
+      {
+        actor: principal,
+        correlationId: randomUUID(),
+        direction: "up",
+        imageId: second.imageId,
+        productId: created.productId,
+        reason: "Feature image should appear first",
+      },
+      database,
+    );
+    await setPrimaryProductImage(
+      {
+        actor: principal,
+        correlationId: randomUUID(),
+        imageId: second.imageId,
+        productId: created.productId,
+        reason: "Selected as the primary catalog image",
+      },
+      database,
+    );
+
+    const stored = await database
+      .select({ id: productImages.id, isPrimary: productImages.isPrimary })
+      .from(productImages)
+      .where(eq(productImages.productId, created.productId))
+      .orderBy(asc(productImages.position));
+    expect(stored.map(({ id }) => id)).toEqual([second.imageId, first.imageId]);
+    expect(stored.filter(({ isPrimary }) => isPrimary).map(({ id }) => id)).toEqual([
+      second.imageId,
+    ]);
+
+    await deleteProductImage(
+      {
+        actor: principal,
+        correlationId: randomUUID(),
+        imageId: second.imageId,
+        productId: created.productId,
+        reason: "Remove the superseded primary image",
+      },
+      database,
+      storage,
+    );
+    const remaining = await database
+      .select({ id: productImages.id, isPrimary: productImages.isPrimary })
+      .from(productImages)
+      .where(eq(productImages.productId, created.productId));
+    expect(remaining).toEqual([{ id: first.imageId, isPrimary: true }]);
+    expect(storedObjects.size).toBe(1);
   });
 });

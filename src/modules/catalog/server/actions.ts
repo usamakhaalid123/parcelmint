@@ -9,14 +9,25 @@ import { z } from "zod";
 import { logger } from "@/lib/logger";
 import { getCurrentPrincipal } from "@/modules/auth/server/current-principal";
 import { slugify } from "@/modules/catalog/domain/catalog-values";
-import { CatalogConflictError, InventoryAdjustmentError } from "@/modules/catalog/domain/errors";
+import {
+  CatalogConcurrentModificationError,
+  CatalogConflictError,
+  InventoryAdjustmentError,
+} from "@/modules/catalog/domain/errors";
 import { CatalogCsvValidationError } from "@/modules/catalog/domain/catalog-csv";
 import {
+  catalogArchiveSchema,
   addProductVariantSchema,
+  createBrandSchema,
+  createCategorySchema,
   createProductSchema,
   inventoryAdjustmentSchema,
   productStatusChangeSchema,
+  productImageMutationSchema,
+  productImageReorderSchema,
   updateProductSchema,
+  updateProductOrganizationSchema,
+  updateProductVariantSchema,
 } from "@/modules/catalog/schemas/catalog-input";
 import {
   addProductVariant,
@@ -24,10 +35,22 @@ import {
   changeProductStatus,
   createCompleteProduct,
   updateProduct,
+  updateProductOrganization,
+  updateProductVariant,
 } from "@/modules/catalog/server/catalog-service";
 import { importCatalogCsv } from "@/modules/catalog/server/catalog-import-service";
 import {
+  createBrand,
+  createCategory,
+  setBrandArchived,
+  setCategoryArchived,
+} from "@/modules/catalog/server/catalog-organization-service";
+import {
+  deleteProductImage,
   ProductImageUploadError,
+  ProductImageMutationError,
+  reorderProductImage,
+  setPrimaryProductImage,
   uploadProductImage,
 } from "@/modules/catalog/server/product-image-service";
 
@@ -48,6 +71,7 @@ function optionalNumber(formData: FormData, key: string): number | null {
 
 function safeActionError(error: unknown): string {
   if (error instanceof CatalogConflictError) return `${error.field}_conflict`;
+  if (error instanceof CatalogConcurrentModificationError) return "concurrent_modification";
   if (error instanceof InventoryAdjustmentError) return error.reason;
   if (error instanceof z.ZodError) return "invalid_input";
   return "operation_failed";
@@ -179,11 +203,15 @@ export async function addVariantAction(formData: FormData): Promise<never> {
         optionName === "" || optionValue === "" ? [] : [{ name: optionName, value: optionValue }],
       productId,
       variant: {
+        heightMillimeters: optionalNumber(formData, "heightMillimeters"),
         isActive: true,
+        lengthMillimeters: optionalNumber(formData, "lengthMillimeters"),
         priceOverrideMinor: optionalNumber(formData, "priceOverrideMinor"),
         sku: stringValue(formData, "sku"),
         stockBehavior: stringValue(formData, "stockBehavior"),
         title: stringValue(formData, "variantTitle"),
+        weightGrams: optionalNumber(formData, "weightGrams"),
+        widthMillimeters: optionalNumber(formData, "widthMillimeters"),
       },
     });
     await addProductVariant({
@@ -303,4 +331,210 @@ export async function updateProductAction(formData: FormData): Promise<never> {
   revalidatePath("/admin/catalog");
   revalidatePath(`/admin/catalog/${productId}`);
   redirect(`/admin/catalog/${productId}?notice=product-updated`);
+}
+
+export async function updateProductVariantAction(formData: FormData): Promise<never> {
+  const productId = stringValue(formData, "productId");
+  const correlationId = randomUUID();
+  try {
+    const values = updateProductVariantSchema.parse({
+      heightMillimeters: optionalNumber(formData, "heightMillimeters"),
+      isActive: formData.get("isActive") === "on",
+      lengthMillimeters: optionalNumber(formData, "lengthMillimeters"),
+      lowStockThreshold: requiredNumber(formData, "lowStockThreshold"),
+      priceOverrideMinor: optionalNumber(formData, "priceOverrideMinor"),
+      productId,
+      reason: stringValue(formData, "reason"),
+      sku: stringValue(formData, "sku"),
+      stockBehavior: stringValue(formData, "stockBehavior"),
+      title: stringValue(formData, "variantTitle"),
+      variantId: stringValue(formData, "variantId"),
+      version: requiredNumber(formData, "version"),
+      weightGrams: optionalNumber(formData, "weightGrams"),
+      widthMillimeters: optionalNumber(formData, "widthMillimeters"),
+    });
+    await updateProductVariant({
+      ...values,
+      actor: await getCurrentPrincipal(),
+      correlationId,
+    });
+  } catch (error) {
+    logger.warn("Catalog variant update failed", { correlationId, error, productId });
+    redirect(`/admin/catalog/${productId}?error=${safeActionError(error)}`);
+  }
+
+  revalidatePath(`/admin/catalog/${productId}`);
+  redirect(`/admin/catalog/${productId}?notice=variant-updated`);
+}
+
+export async function updateProductOrganizationAction(formData: FormData): Promise<never> {
+  const productId = stringValue(formData, "productId");
+  const correlationId = randomUUID();
+  try {
+    const brandId = stringValue(formData, "brandId");
+    const values = updateProductOrganizationSchema.parse({
+      brandId: brandId === "" ? null : brandId,
+      categoryIds: formData
+        .getAll("categoryIds")
+        .filter((value): value is string => typeof value === "string"),
+      productId,
+      reason: stringValue(formData, "reason"),
+    });
+    await updateProductOrganization({
+      ...values,
+      actor: await getCurrentPrincipal(),
+      correlationId,
+    });
+  } catch (error) {
+    logger.warn("Product organization update failed", { correlationId, error, productId });
+    redirect(`/admin/catalog/${productId}?error=${safeActionError(error)}`);
+  }
+  revalidatePath("/admin/catalog");
+  revalidatePath(`/admin/catalog/${productId}`);
+  redirect(`/admin/catalog/${productId}?notice=product-organization-updated`);
+}
+
+export async function createBrandAction(formData: FormData): Promise<never> {
+  const correlationId = randomUUID();
+  try {
+    const name = stringValue(formData, "name");
+    const values = createBrandSchema.parse({
+      name,
+      slug: stringValue(formData, "slug") || slugify(name),
+    });
+    await createBrand({
+      ...values,
+      actor: await getCurrentPrincipal(),
+      correlationId,
+    });
+  } catch (error) {
+    logger.warn("Catalog brand creation failed", { correlationId, error });
+    redirect(`/admin/catalog/organization?error=${safeActionError(error)}`);
+  }
+  revalidatePath("/admin/catalog/organization");
+  redirect("/admin/catalog/organization?notice=brand-created");
+}
+
+export async function createCategoryAction(formData: FormData): Promise<never> {
+  const correlationId = randomUUID();
+  try {
+    const name = stringValue(formData, "name");
+    const parentId = stringValue(formData, "parentId");
+    const values = createCategorySchema.parse({
+      description: stringValue(formData, "description") || null,
+      name,
+      parentId: parentId === "" ? null : parentId,
+      position: requiredNumber(formData, "position"),
+      slug: stringValue(formData, "slug") || slugify(name),
+    });
+    await createCategory({
+      ...values,
+      actor: await getCurrentPrincipal(),
+      correlationId,
+    });
+  } catch (error) {
+    logger.warn("Catalog category creation failed", { correlationId, error });
+    redirect(`/admin/catalog/organization?error=${safeActionError(error)}`);
+  }
+  revalidatePath("/admin/catalog/organization");
+  redirect("/admin/catalog/organization?notice=category-created");
+}
+
+async function changeOrganizationArchiveState(
+  formData: FormData,
+  resourceType: "brand" | "category",
+): Promise<never> {
+  const correlationId = randomUUID();
+  try {
+    const values = catalogArchiveSchema.parse({
+      archived: stringValue(formData, "archived") === "true",
+      reason: stringValue(formData, "reason"),
+      resourceId: stringValue(formData, "resourceId"),
+    });
+    const input = { ...values, actor: await getCurrentPrincipal(), correlationId };
+    if (resourceType === "brand") await setBrandArchived(input);
+    else await setCategoryArchived(input);
+  } catch (error) {
+    logger.warn("Catalog organization archive change failed", {
+      correlationId,
+      error,
+      resourceType,
+    });
+    redirect(`/admin/catalog/organization?error=${safeActionError(error)}`);
+  }
+  revalidatePath("/admin/catalog/organization");
+  redirect(`/admin/catalog/organization?notice=${resourceType}-updated`);
+}
+
+export async function setBrandArchivedAction(formData: FormData): Promise<never> {
+  return changeOrganizationArchiveState(formData, "brand");
+}
+
+export async function setCategoryArchivedAction(formData: FormData): Promise<never> {
+  return changeOrganizationArchiveState(formData, "category");
+}
+
+function productImageValues(formData: FormData) {
+  return productImageMutationSchema.parse({
+    imageId: stringValue(formData, "imageId"),
+    productId: stringValue(formData, "productId"),
+    reason: stringValue(formData, "reason"),
+  });
+}
+
+export async function setPrimaryProductImageAction(formData: FormData): Promise<never> {
+  const productId = stringValue(formData, "productId");
+  const correlationId = randomUUID();
+  try {
+    await setPrimaryProductImage({
+      ...productImageValues(formData),
+      actor: await getCurrentPrincipal(),
+      correlationId,
+    });
+  } catch (error) {
+    logger.warn("Set primary product image failed", { correlationId, error, productId });
+    redirect(`/admin/catalog/${productId}?error=${safeActionError(error)}`);
+  }
+  revalidatePath(`/admin/catalog/${productId}`);
+  redirect(`/admin/catalog/${productId}?notice=image-primary-updated`);
+}
+
+export async function reorderProductImageAction(formData: FormData): Promise<never> {
+  const productId = stringValue(formData, "productId");
+  const correlationId = randomUUID();
+  try {
+    const values = productImageReorderSchema.parse({
+      ...productImageValues(formData),
+      direction: stringValue(formData, "direction"),
+    });
+    await reorderProductImage({
+      ...values,
+      actor: await getCurrentPrincipal(),
+      correlationId,
+    });
+  } catch (error) {
+    logger.warn("Product image reorder failed", { correlationId, error, productId });
+    redirect(`/admin/catalog/${productId}?error=${safeActionError(error)}`);
+  }
+  revalidatePath(`/admin/catalog/${productId}`);
+  redirect(`/admin/catalog/${productId}?notice=image-reordered`);
+}
+
+export async function deleteProductImageAction(formData: FormData): Promise<never> {
+  const productId = stringValue(formData, "productId");
+  const correlationId = randomUUID();
+  try {
+    await deleteProductImage({
+      ...productImageValues(formData),
+      actor: await getCurrentPrincipal(),
+      correlationId,
+    });
+  } catch (error) {
+    logger.warn("Product image deletion failed", { correlationId, error, productId });
+    const errorCode =
+      error instanceof ProductImageMutationError ? error.reason : safeActionError(error);
+    redirect(`/admin/catalog/${productId}?error=${errorCode}`);
+  }
+  revalidatePath(`/admin/catalog/${productId}`);
+  redirect(`/admin/catalog/${productId}?notice=image-deleted`);
 }

@@ -9,6 +9,35 @@ const slugSchema = z
 
 const optionalPositiveInteger = z.number().int().positive().nullable().optional();
 
+export const createBrandSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  slug: slugSchema,
+});
+
+export const createCategorySchema = z.object({
+  description: z.string().trim().max(2_000).nullable().optional(),
+  name: z.string().trim().min(1).max(120),
+  parentId: z.string().uuid().nullable().optional(),
+  position: z.number().int().nonnegative().max(100_000).default(0),
+  slug: slugSchema,
+});
+
+export const catalogArchiveSchema = z.object({
+  archived: z.boolean(),
+  reason: z.string().trim().min(3).max(500),
+  resourceId: z.string().uuid(),
+});
+
+export const productImageMutationSchema = z.object({
+  imageId: z.string().uuid(),
+  productId: z.string().uuid(),
+  reason: z.string().trim().min(3).max(500),
+});
+
+export const productImageReorderSchema = productImageMutationSchema.extend({
+  direction: z.enum(["down", "up"]),
+});
+
 export const productVariantInputSchema = z.object({
   heightMillimeters: optionalPositiveInteger,
   isActive: z.boolean().default(true),
@@ -92,7 +121,26 @@ export const updateProductSchema = z.object({
   version: z.number().int().positive(),
 });
 
+export const updateProductVariantSchema = productVariantInputSchema.extend({
+  lowStockThreshold: z.number().int().nonnegative().max(2_000_000_000),
+  productId: z.string().uuid(),
+  reason: z.string().trim().min(3).max(500),
+  variantId: z.string().uuid(),
+  version: z.number().int().positive(),
+});
+
+export const updateProductOrganizationSchema = z.object({
+  brandId: z.string().uuid().nullable(),
+  categoryIds: z
+    .array(z.string().uuid())
+    .max(20)
+    .refine((values) => new Set(values).size === values.length),
+  productId: z.string().uuid(),
+  reason: z.string().trim().min(3).max(500),
+});
+
 export type CreateProductValues = z.output<typeof createProductSchema>;
 export type InventoryAdjustmentValues = z.output<typeof inventoryAdjustmentSchema>;
 export type ProductStatusChangeValues = z.output<typeof productStatusChangeSchema>;
 export type UpdateProductValues = z.output<typeof updateProductSchema>;
+export type UpdateProductVariantValues = z.output<typeof updateProductVariantSchema>;
