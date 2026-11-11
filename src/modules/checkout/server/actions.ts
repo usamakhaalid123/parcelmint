@@ -100,6 +100,7 @@ export type CheckoutActionState = { status: "idle" } | { message: string; status
 const checkoutMessages: Record<string, string> = {
   cart_empty: "Your cart is empty.",
   cart_unavailable: "One or more cart items are no longer available.",
+  checkout_blocked: "This order requires assistance before cash-on-delivery checkout can continue.",
   coupon_invalid: "The coupon is no longer valid. Review your cart and try again.",
   delivery_unsupported: "The selected delivery area is not available for this order.",
   idempotency_conflict: "This checkout request was already used with different details.",

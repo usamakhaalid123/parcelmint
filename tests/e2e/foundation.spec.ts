@@ -36,3 +36,10 @@ test("redirects unauthenticated catalog administrators to sign in", async ({ pag
   await expect(page).toHaveURL(/\/admin\/sign-in$/);
   await expect(page.getByRole("heading", { level: 1, name: "Sign in to continue." })).toBeVisible();
 });
+
+test("protects order operations from unauthenticated access", async ({ page }) => {
+  await page.goto("/admin/orders");
+
+  await expect(page).toHaveURL(/\/admin\/sign-in$/);
+  await expect(page.getByRole("heading", { level: 1, name: "Sign in to continue." })).toBeVisible();
+});

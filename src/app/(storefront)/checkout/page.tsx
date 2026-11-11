@@ -26,7 +26,7 @@ export default async function CheckoutPage() {
     );
   }
   const currencyCode = cart.lines[0]?.currencyCode ?? "PKR";
-  const options = await listDeliveryOptions(currencyCode, cart.subtotalMinor);
+  const options = await listDeliveryOptions(currencyCode, cart.subtotalMinor, cart.totalMinor);
   if (options.length === 0) {
     return (
       <StorefrontMain>

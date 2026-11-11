@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 
-import { and, asc, count, eq, gte, isNull, lte, or, sql } from "drizzle-orm";
+import { and, asc, count, eq, gt, gte, isNull, lte, or, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import { getDatabase } from "@/db/client";
@@ -12,9 +12,11 @@ import {
   idempotencyKeys,
   inventoryItems,
   inventoryReservations,
+  operationalBlocks,
   orderAddresses,
   orderItems,
   orders,
+  orderRiskFlags,
   outboxEvents,
   shippingRates,
 } from "@/db/schema";
@@ -64,6 +66,10 @@ function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
+function normalizeAddressForRisk(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
 function requestHash(cartId: string, input: CheckoutInput): string {
   return sha256(
     JSON.stringify({
@@ -84,6 +90,7 @@ function requestHash(cartId: string, input: CheckoutInput): string {
 export async function listDeliveryOptions(
   currencyCode: string,
   subtotalMinor: number,
+  payableBeforeShippingMinor = subtotalMinor,
   database: Database = getDatabase(),
 ): Promise<readonly DeliveryOption[]> {
   return database
@@ -100,12 +107,18 @@ export async function listDeliveryOptions(
     .where(
       and(
         eq(deliveryZones.isActive, true),
+        eq(deliveryZones.codEnabled, true),
         eq(shippingRates.isActive, true),
         eq(shippingRates.currencyCode, currencyCode),
         lte(shippingRates.minimumSubtotalMinor, subtotalMinor),
         or(
           isNull(shippingRates.maximumSubtotalMinor),
           gte(shippingRates.maximumSubtotalMinor, subtotalMinor),
+        ),
+        sql`${deliveryZones.codMinimumMinor} <= ${payableBeforeShippingMinor} + ${shippingRates.feeMinor}`,
+        or(
+          isNull(deliveryZones.codMaximumMinor),
+          sql`${deliveryZones.codMaximumMinor} >= ${payableBeforeShippingMinor} + ${shippingRates.feeMinor}`,
         ),
       ),
     )
@@ -179,6 +192,9 @@ export async function createOrderFromCart(
     const [delivery] = await transaction
       .select({
         areaName: deliveryZones.name,
+        codEnabled: deliveryZones.codEnabled,
+        codMaximumMinor: deliveryZones.codMaximumMinor,
+        codMinimumMinor: deliveryZones.codMinimumMinor,
         feeMinor: shippingRates.feeMinor,
       })
       .from(deliveryZones)
@@ -200,6 +216,27 @@ export async function createOrderFromCart(
       .limit(1);
     if (delivery === undefined) throw new CheckoutError("delivery_unsupported");
 
+    const now = new Date();
+    const mobileHash = sha256(input.mobileNumber);
+    const addressHash = sha256(normalizeAddressForRisk(input.addressLine));
+    const [activeBlock] = await transaction
+      .select({ id: operationalBlocks.id })
+      .from(operationalBlocks)
+      .where(
+        and(
+          or(
+            and(eq(operationalBlocks.type, "mobile"), eq(operationalBlocks.valueHash, mobileHash)),
+            and(
+              eq(operationalBlocks.type, "address"),
+              eq(operationalBlocks.valueHash, addressHash),
+            ),
+          ),
+          or(isNull(operationalBlocks.expiresAt), gt(operationalBlocks.expiresAt, now)),
+        ),
+      )
+      .limit(1);
+    if (activeBlock !== undefined) throw new CheckoutError("checkout_blocked");
+
     const [cart] = await transaction
       .select({ couponId: carts.couponId })
       .from(carts)
@@ -212,7 +249,7 @@ export async function createOrderFromCart(
       maximumDiscountMinor: number | null;
       minimumSubtotalMinor: number;
     } | null = null;
-    const customerKeyHash = sha256(input.mobileNumber);
+    const customerKeyHash = mobileHash;
     if (cart?.couponId !== null && cart?.couponId !== undefined) {
       const [coupon] = await transaction
         .select()
@@ -264,9 +301,24 @@ export async function createOrderFromCart(
       delivery.feeMinor,
       appliedCoupon,
     );
+    if (
+      !delivery.codEnabled ||
+      pricing.grandTotalMinor < delivery.codMinimumMinor ||
+      (delivery.codMaximumMinor !== null && pricing.grandTotalMinor > delivery.codMaximumMinor)
+    ) {
+      throw new CheckoutError("delivery_unsupported");
+    }
+    const [recentSimilarOrders] = await transaction
+      .select({ value: count() })
+      .from(orders)
+      .where(
+        and(
+          eq(orders.mobileNumber, input.mobileNumber),
+          gt(orders.createdAt, new Date(now.getTime() - 24 * 60 * 60 * 1000)),
+        ),
+      );
     const orderId = randomUUID();
     const orderNumber = `PM-${randomUUID().replaceAll("-", "").slice(0, 12).toUpperCase()}`;
-    const now = new Date();
     await transaction.insert(orders).values({
       cartId,
       currencyCode,
@@ -293,6 +345,13 @@ export async function createOrderFromCart(
       orderId,
       postalCode: input.postalCode,
     });
+    if ((recentSimilarOrders?.value ?? 0) > 0) {
+      await transaction.insert(orderRiskFlags).values({
+        code: "recent_mobile_order",
+        details: { lookbackHours: 24, matchingOrders: recentSimilarOrders?.value ?? 0 },
+        orderId,
+      });
+    }
 
     for (const line of lines) {
       const discountAllocationMinor = pricing.lineDiscounts.get(line.variantId) ?? 0;
@@ -367,6 +426,13 @@ export async function createOrderFromCart(
       idempotencyKey: `order.received:${orderId}`,
       payload: { orderId, orderNumber },
       topic: "order.received",
+    });
+    await transaction.insert(outboxEvents).values({
+      aggregateId: orderId,
+      aggregateType: "order",
+      idempotencyKey: `order.verification_required:${orderId}`,
+      payload: { orderId },
+      topic: "order.verification_required",
     });
     await transaction
       .update(carts)

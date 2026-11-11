@@ -141,6 +141,9 @@ export const deliveryZones = pgTable(
     code: text("code").notNull(),
     name: text("name").notNull(),
     isActive: boolean("is_active").notNull().default(true),
+    codEnabled: boolean("cod_enabled").notNull().default(true),
+    codMaximumMinor: integer("cod_maximum_minor"),
+    codMinimumMinor: integer("cod_minimum_minor").notNull().default(0),
     position: integer("position").notNull().default(0),
     createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { mode: "date", withTimezone: true }).notNull().defaultNow(),
@@ -149,6 +152,11 @@ export const deliveryZones = pgTable(
     uniqueIndex("delivery_zones_code_unique").on(table.code),
     check("delivery_zones_code_format", sql`${table.code} ~ '^[A-Z0-9_-]+$'`),
     check("delivery_zones_position_non_negative", sql`${table.position} >= 0`),
+    check("delivery_zones_cod_minimum_non_negative", sql`${table.codMinimumMinor} >= 0`),
+    check(
+      "delivery_zones_cod_range_valid",
+      sql`${table.codMaximumMinor} IS NULL OR ${table.codMaximumMinor} >= ${table.codMinimumMinor}`,
+    ),
   ],
 );
 

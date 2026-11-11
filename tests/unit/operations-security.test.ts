@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { parseSupabaseServiceRoleKey, parseWorkerInvocationSecret } from "@/config/operations-env";
+import {
+  parseCourierWebhookSecret,
+  parseSupabaseServiceRoleKey,
+  parseWorkerInvocationSecret,
+} from "@/config/operations-env";
 import { EnvironmentConfigurationError } from "@/config/env";
 import { secretsMatch } from "@/lib/constant-time-secret";
 import { resolveSafeRedirectPath } from "@/modules/auth/domain/safe-redirect";
@@ -11,6 +15,9 @@ describe("operations security boundaries", () => {
       EnvironmentConfigurationError,
     );
     expect(() => parseSupabaseServiceRoleKey({ SUPABASE_SERVICE_ROLE_KEY: "short" })).toThrow(
+      EnvironmentConfigurationError,
+    );
+    expect(() => parseCourierWebhookSecret({ COURIER_WEBHOOK_SECRET: "short" })).toThrow(
       EnvironmentConfigurationError,
     );
 

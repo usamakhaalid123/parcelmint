@@ -16,11 +16,17 @@ import {
   categories,
   coupons,
   deliveryZones,
+  fulfillments,
   inventoryItems,
   inventoryMovements,
   inventoryReservations,
+  notificationAttempts,
+  notifications,
+  orderOperationEvents,
+  orderRiskFlags,
   orderItems,
   orders,
+  otpChallenges,
   outboxEvents,
   permissions,
   productCategories,
@@ -30,6 +36,8 @@ import {
   rolePermissions,
   roles,
   shippingRates,
+  shipmentEvents,
+  shipments,
   userRoles,
   users,
 } from "@/db/schema";
@@ -73,6 +81,19 @@ import { createOrderFromCart } from "@/modules/checkout/server/checkout-service"
 import { releaseExpiredReservations } from "@/modules/checkout/server/reservation-expiry-service";
 import { CheckoutError } from "@/modules/checkout";
 import type { CheckoutInput } from "@/modules/checkout";
+import { OrderAuthorizationError, OrderTransitionError } from "@/modules/orders";
+import {
+  cancelOrder,
+  confirmOrderManually,
+  createShipmentLabel,
+  applyCourierEvent,
+  handoffOrder,
+  transitionFulfillment,
+  transitionShipment,
+} from "@/modules/orders/server/order-service";
+import { issueOrderOtp, verifyOrderOtp } from "@/modules/orders/server/otp-service";
+import { createNotificationOutboxHandlers } from "@/modules/orders/server/notification-service";
+import { createOperationalBlock } from "@/modules/orders/server/blocklist-service";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 
@@ -188,6 +209,46 @@ describe.skipIf(testDatabaseUrl === undefined)("phase 1 database foundation", ()
       name: "Standard delivery",
     });
     return zone.id;
+  }
+
+  async function seedOrderPrincipal(
+    permissionKeys: readonly string[] = ["orders.manage"],
+  ): Promise<StaffPrincipal> {
+    const [actor] = await database
+      .insert(users)
+      .values({ accountType: "staff", identityId: randomUUID() })
+      .returning({ id: users.id });
+    if (actor === undefined) throw new Error("Order actor creation failed");
+    return {
+      accountType: "staff",
+      permissionKeys: new Set(permissionKeys),
+      status: "active",
+      userId: actor.id,
+    };
+  }
+
+  async function seedSubmittedOrder(initialQuantity = 3, mobileNumber = "+923006666666") {
+    const product = await seedCheckoutProduct(initialQuantity);
+    const deliveryZoneId = await seedDeliveryZone();
+    const cart = await createCart(`phase5-${randomUUID()}`, database);
+    await addCartItem(cart.id, product.variantId, 1, database);
+    const order = await createOrderFromCart(
+      cart.id,
+      {
+        addressLine: "45 Phase Five Operations Road",
+        customerName: "Phase Five Buyer",
+        deliveryInstructions: null,
+        deliveryZoneId,
+        email: null,
+        idempotencyKey: randomUUID(),
+        landmark: null,
+        mobileNumber,
+        policyConsent: "on",
+        postalCode: null,
+      },
+      database,
+    );
+    return { order, product };
   }
 
   it("seeds the authorization catalog idempotently", async () => {
@@ -1276,5 +1337,508 @@ describe.skipIf(testDatabaseUrl === undefined)("phase 1 database foundation", ()
       .where(eq(carts.id, source.id));
     expect(merged?.quantity).toBe(5);
     expect(sourceCart?.status).toBe("abandoned");
+  });
+
+  it("enforces and audits the complete verification-to-handoff workflow", async () => {
+    const { order, product } = await seedSubmittedOrder();
+    const principal = await seedOrderPrincipal();
+
+    await confirmOrderManually(
+      {
+        actor: principal,
+        correlationId: randomUUID(),
+        orderId: order.orderId,
+        reason: "Customer confirmed the COD order by phone",
+      },
+      database,
+    );
+    await expect(
+      confirmOrderManually(
+        {
+          actor: principal,
+          correlationId: randomUUID(),
+          orderId: order.orderId,
+          reason: "Invalid repeated confirmation",
+        },
+        database,
+      ),
+    ).rejects.toEqual(new OrderTransitionError("invalid_transition"));
+    await transitionFulfillment(
+      {
+        actor: principal,
+        correlationId: randomUUID(),
+        nextState: "processing",
+        orderId: order.orderId,
+        reason: "Warehouse started picking the order",
+      },
+      database,
+    );
+    await transitionFulfillment(
+      {
+        actor: principal,
+        correlationId: randomUUID(),
+        nextState: "packed",
+        orderId: order.orderId,
+        reason: "Warehouse completed packing checks",
+      },
+      database,
+    );
+    await createShipmentLabel(
+      {
+        actor: principal,
+        correlationId: randomUUID(),
+        courierCode: "TEST_COURIER",
+        orderId: order.orderId,
+        reason: "Courier booking created",
+        trackingNumber: `TRACK-${randomUUID()}`,
+      },
+      database,
+    );
+    await expect(
+      transitionShipment(
+        {
+          actor: principal,
+          correlationId: randomUUID(),
+          nextState: "handed_to_courier",
+          orderId: order.orderId,
+          reason: "Attempt to bypass atomic courier handoff",
+        },
+        database,
+      ),
+    ).rejects.toThrow();
+    await handoffOrder(
+      {
+        actor: principal,
+        correlationId: randomUUID(),
+        orderId: order.orderId,
+        reason: "Sealed parcel handed to courier",
+      },
+      database,
+    );
+
+    const [state] = await database
+      .select({
+        fulfillment: fulfillments.status,
+        orderFulfillment: orders.fulfillmentState,
+        shipment: shipments.status,
+      })
+      .from(orders)
+      .innerJoin(fulfillments, eq(fulfillments.orderId, orders.id))
+      .innerJoin(shipments, eq(shipments.fulfillmentId, fulfillments.id))
+      .where(eq(orders.id, order.orderId));
+    const [inventory] = await database
+      .select({ onHand: inventoryItems.onHandQuantity, reserved: inventoryItems.reservedQuantity })
+      .from(inventoryItems)
+      .where(eq(inventoryItems.variantId, product.variantId));
+    const events = await database
+      .select({ id: orderOperationEvents.id })
+      .from(orderOperationEvents)
+      .where(eq(orderOperationEvents.orderId, order.orderId));
+
+    expect(state).toEqual({
+      fulfillment: "fulfilled",
+      orderFulfillment: "fulfilled",
+      shipment: "handed_to_courier",
+    });
+    expect(inventory).toEqual({ onHand: 2, reserved: 0 });
+    expect(events.length).toBeGreaterThanOrEqual(5);
+    await expect(
+      database
+        .update(orderOperationEvents)
+        .set({ reason: "Mutated operational history" })
+        .where(eq(orderOperationEvents.orderId, order.orderId)),
+    ).rejects.toMatchObject({ cause: { code: "55000" } });
+  });
+
+  it("cancels shipment and releases stock before courier handoff", async () => {
+    const { order, product } = await seedSubmittedOrder(2, "+923007171717");
+    const principal = await seedOrderPrincipal();
+    await confirmOrderManually(
+      {
+        actor: principal,
+        correlationId: randomUUID(),
+        orderId: order.orderId,
+        reason: "Confirmed before pre-handoff cancellation test",
+      },
+      database,
+    );
+    await createShipmentLabel(
+      {
+        actor: principal,
+        correlationId: randomUUID(),
+        courierCode: "PRE_CANCEL",
+        orderId: order.orderId,
+        reason: "Created label before customer cancellation",
+        trackingNumber: `PRE-CANCEL-${randomUUID()}`,
+      },
+      database,
+    );
+    await cancelOrder(
+      {
+        actor: principal,
+        correlationId: randomUUID(),
+        orderId: order.orderId,
+        reason: "Customer cancelled before courier handoff",
+      },
+      database,
+    );
+    const [state] = await database
+      .select({
+        fulfillment: orders.fulfillmentState,
+        lifecycle: orders.lifecycleState,
+        shipment: shipments.status,
+      })
+      .from(orders)
+      .innerJoin(fulfillments, eq(fulfillments.orderId, orders.id))
+      .innerJoin(shipments, eq(shipments.fulfillmentId, fulfillments.id))
+      .where(eq(orders.id, order.orderId));
+    const [inventory] = await database
+      .select({ onHand: inventoryItems.onHandQuantity, reserved: inventoryItems.reservedQuantity })
+      .from(inventoryItems)
+      .where(eq(inventoryItems.variantId, product.variantId));
+    expect(state).toEqual({
+      fulfillment: "cancelled",
+      lifecycle: "cancelled",
+      shipment: "cancelled",
+    });
+    expect(inventory).toEqual({ onHand: 2, reserved: 0 });
+  });
+
+  it("requires elevated permission to cancel after stock finalization", async () => {
+    const { order, product } = await seedSubmittedOrder(2, "+923007777777");
+    const principal = await seedOrderPrincipal();
+    await confirmOrderManually(
+      {
+        actor: principal,
+        correlationId: randomUUID(),
+        orderId: order.orderId,
+        reason: "Customer confirmed before cancellation test",
+      },
+      database,
+    );
+    await transitionFulfillment(
+      {
+        actor: principal,
+        correlationId: randomUUID(),
+        nextState: "processing",
+        orderId: order.orderId,
+        reason: "Started cancellation test processing",
+      },
+      database,
+    );
+    await transitionFulfillment(
+      {
+        actor: principal,
+        correlationId: randomUUID(),
+        nextState: "packed",
+        orderId: order.orderId,
+        reason: "Packed cancellation test order",
+      },
+      database,
+    );
+    await createShipmentLabel(
+      {
+        actor: principal,
+        correlationId: randomUUID(),
+        courierCode: "CANCEL_TEST",
+        orderId: order.orderId,
+        reason: "Created cancellation test label",
+        trackingNumber: `CANCEL-${randomUUID()}`,
+      },
+      database,
+    );
+    await handoffOrder(
+      {
+        actor: principal,
+        correlationId: randomUUID(),
+        orderId: order.orderId,
+        reason: "Finalized stock before cancellation test",
+      },
+      database,
+    );
+
+    await expect(
+      cancelOrder(
+        {
+          actor: principal,
+          correlationId: randomUUID(),
+          orderId: order.orderId,
+          reason: "Attempt without elevated permission",
+        },
+        database,
+      ),
+    ).rejects.toBeInstanceOf(OrderAuthorizationError);
+    const elevated = await seedOrderPrincipal(["orders.manage", "orders.cancel_after_shipment"]);
+    await cancelOrder(
+      {
+        actor: elevated,
+        correlationId: randomUUID(),
+        orderId: order.orderId,
+        reason: "Courier reported an approved post-handoff cancellation",
+      },
+      database,
+    );
+    const [inventory] = await database
+      .select({ onHand: inventoryItems.onHandQuantity, reserved: inventoryItems.reservedQuantity })
+      .from(inventoryItems)
+      .where(eq(inventoryItems.variantId, product.variantId));
+    const [cancelled] = await database
+      .select({ lifecycle: orders.lifecycleState })
+      .from(orders)
+      .where(eq(orders.id, order.orderId));
+    expect(cancelled?.lifecycle).toBe("cancelled");
+    expect(inventory).toEqual({ onHand: 1, reserved: 0 });
+  });
+
+  it("rejects out-of-order courier events and ignores duplicate provider events", async () => {
+    const { order } = await seedSubmittedOrder(2, "+923008888888");
+    const principal = await seedOrderPrincipal();
+    await confirmOrderManually(
+      {
+        actor: principal,
+        correlationId: randomUUID(),
+        orderId: order.orderId,
+        reason: "Confirmed courier event test",
+      },
+      database,
+    );
+    await transitionFulfillment(
+      {
+        actor: principal,
+        correlationId: randomUUID(),
+        nextState: "processing",
+        orderId: order.orderId,
+        reason: "Processing courier event test",
+      },
+      database,
+    );
+    await transitionFulfillment(
+      {
+        actor: principal,
+        correlationId: randomUUID(),
+        nextState: "packed",
+        orderId: order.orderId,
+        reason: "Packed courier event test",
+      },
+      database,
+    );
+    await createShipmentLabel(
+      {
+        actor: principal,
+        correlationId: randomUUID(),
+        courierCode: "EVENT_TEST",
+        orderId: order.orderId,
+        reason: "Created courier event label",
+        trackingNumber: `EVENT-${randomUUID()}`,
+      },
+      database,
+    );
+    await handoffOrder(
+      {
+        actor: principal,
+        correlationId: randomUUID(),
+        orderId: order.orderId,
+        reason: "Courier accepted event test parcel",
+      },
+      database,
+    );
+    const providerEventId = `provider-${randomUUID()}`;
+    const [shipment] = await database
+      .select({ courierCode: shipments.courierCode, trackingNumber: shipments.trackingNumber })
+      .from(shipments)
+      .innerJoin(fulfillments, eq(fulfillments.id, shipments.fulfillmentId))
+      .where(eq(fulfillments.orderId, order.orderId));
+    if (
+      shipment?.courierCode === null ||
+      shipment?.trackingNumber === null ||
+      shipment === undefined
+    ) {
+      throw new Error("Courier shipment was not configured");
+    }
+    await expect(
+      applyCourierEvent(
+        {
+          courierCode: shipment.courierCode,
+          nextState: "in_transit",
+          providerEventId,
+          reason: "Courier scanned parcel in transit",
+          trackingNumber: shipment.trackingNumber,
+        },
+        database,
+      ),
+    ).resolves.toMatchObject({ duplicate: false, orderId: order.orderId });
+    await expect(
+      applyCourierEvent(
+        {
+          courierCode: shipment.courierCode,
+          nextState: "in_transit",
+          providerEventId,
+          reason: "Duplicate courier delivery",
+          trackingNumber: shipment.trackingNumber,
+        },
+        database,
+      ),
+    ).resolves.toMatchObject({ duplicate: true, orderId: order.orderId });
+    await expect(
+      transitionShipment(
+        {
+          actor: principal,
+          correlationId: randomUUID(),
+          nextState: "delivered",
+          orderId: order.orderId,
+          providerEventId: `provider-${randomUUID()}`,
+          reason: "Invalid skipped delivery states",
+        },
+        database,
+      ),
+    ).rejects.toEqual(new OrderTransitionError("invalid_transition"));
+    const events = await database
+      .select({ id: shipmentEvents.id })
+      .from(shipmentEvents)
+      .where(eq(shipmentEvents.providerEventId, providerEventId));
+    expect(events).toHaveLength(1);
+  });
+
+  it("stores OTP verifiers one-way and persists failed attempt limits", async () => {
+    const { order } = await seedSubmittedOrder(2, "+923009999999");
+    const principal = await seedOrderPrincipal();
+    const issued = await issueOrderOtp(
+      { actor: principal, correlationId: randomUUID(), orderId: order.orderId },
+      database,
+    );
+    const [stored] = await database
+      .select({ attempts: otpChallenges.attemptCount, verifier: otpChallenges.verifierHash })
+      .from(otpChallenges)
+      .where(eq(otpChallenges.id, issued.challengeId));
+    expect(stored?.verifier).not.toContain(issued.code);
+    const wrongCode = issued.code === "000001" ? "000002" : "000001";
+    await expect(
+      verifyOrderOtp(
+        { challengeId: issued.challengeId, code: wrongCode, correlationId: randomUUID() },
+        database,
+      ),
+    ).rejects.toEqual(new OrderTransitionError("invalid_transition"));
+    const [afterFailure] = await database
+      .select({ attempts: otpChallenges.attemptCount })
+      .from(otpChallenges)
+      .where(eq(otpChallenges.id, issued.challengeId));
+    expect(afterFailure?.attempts).toBe(1);
+    await expect(
+      verifyOrderOtp(
+        { challengeId: issued.challengeId, code: issued.code, correlationId: randomUUID() },
+        database,
+      ),
+    ).resolves.toEqual({ orderId: order.orderId });
+  });
+
+  it("enforces audited blocklists and flags likely duplicates without auto-rejection", async () => {
+    const blockPrincipal = await seedOrderPrincipal(["customers.blocklist"]);
+    await createOperationalBlock(
+      {
+        actor: blockPrincipal,
+        correlationId: randomUUID(),
+        expiresAt: null,
+        reason: "Confirmed operational abuse pattern",
+        type: "mobile",
+        value: "+923001212121",
+      },
+      database,
+    );
+    const product = await seedCheckoutProduct(4);
+    const deliveryZoneId = await seedDeliveryZone();
+    const blockedCart = await createCart(`blocked-${randomUUID()}`, database);
+    await addCartItem(blockedCart.id, product.variantId, 1, database);
+    await expect(
+      createOrderFromCart(
+        blockedCart.id,
+        {
+          addressLine: "67 Blocked Checkout Street",
+          customerName: "Blocked Buyer",
+          deliveryInstructions: null,
+          deliveryZoneId,
+          email: null,
+          idempotencyKey: randomUUID(),
+          landmark: null,
+          mobileNumber: "+923001212121",
+          policyConsent: "on",
+          postalCode: null,
+        },
+        database,
+      ),
+    ).rejects.toEqual(new CheckoutError("checkout_blocked"));
+
+    const first = await seedSubmittedOrder(3, "+923001313131");
+    const second = await seedSubmittedOrder(3, "+923001313131");
+    const flags = await database
+      .select({ code: orderRiskFlags.code })
+      .from(orderRiskFlags)
+      .where(eq(orderRiskFlags.orderId, second.order.orderId));
+    expect(first.order.orderId).not.toBe(second.order.orderId);
+    expect(flags).toContainEqual({ code: "recent_mobile_order" });
+  });
+
+  it("rechecks delivery-zone COD limits inside the order transaction", async () => {
+    const product = await seedCheckoutProduct(2);
+    const deliveryZoneId = await seedDeliveryZone();
+    await database
+      .update(deliveryZones)
+      .set({ codMaximumMinor: 5_000 })
+      .where(eq(deliveryZones.id, deliveryZoneId));
+    const cart = await createCart(`cod-limit-${randomUUID()}`, database);
+    await addCartItem(cart.id, product.variantId, 1, database);
+    await expect(
+      createOrderFromCart(
+        cart.id,
+        {
+          addressLine: "89 COD Limit Avenue",
+          customerName: "COD Limit Buyer",
+          deliveryInstructions: null,
+          deliveryZoneId,
+          email: null,
+          idempotencyKey: randomUUID(),
+          landmark: null,
+          mobileNumber: "+923001414141",
+          policyConsent: "on",
+          postalCode: null,
+        },
+        database,
+      ),
+    ).rejects.toEqual(new CheckoutError("delivery_unsupported"));
+  });
+
+  it("records notification failure without corrupting the committed order", async () => {
+    const { order } = await seedSubmittedOrder(2, "+923001010101");
+    const handlers = createNotificationOutboxHandlers(
+      {
+        async send() {
+          throw new Error("Synthetic provider outage");
+        },
+      },
+      database,
+    );
+    await runOutboxWorker({ batchSize: 100, database, handlers, workerId: randomUUID() });
+    const [persistedOrder] = await database
+      .select({ id: orders.id })
+      .from(orders)
+      .where(eq(orders.id, order.orderId));
+    const [notification] = await database
+      .select({ id: notifications.id, status: notifications.status })
+      .from(notifications)
+      .where(
+        and(
+          eq(notifications.orderId, order.orderId),
+          eq(notifications.eventType, "order.received"),
+        ),
+      );
+    const attempts =
+      notification === undefined
+        ? []
+        : await database
+            .select({ outcome: notificationAttempts.outcome })
+            .from(notificationAttempts)
+            .where(eq(notificationAttempts.notificationId, notification.id));
+    expect(persistedOrder?.id).toBe(order.orderId);
+    expect(notification?.status).toBe("failed");
+    expect(attempts).toContainEqual({ outcome: "failed" });
   });
 });

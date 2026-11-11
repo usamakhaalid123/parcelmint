@@ -4,6 +4,10 @@ import { getWorkerInvocationSecret } from "@/config/operations-env";
 import { secretsMatch } from "@/lib/constant-time-secret";
 import { logger } from "@/lib/logger";
 import { runOutboxWorker } from "@/modules/jobs/server/outbox-worker";
+import {
+  createNotificationOutboxHandlers,
+  unavailableNotificationSender,
+} from "@/modules/orders/server/notification-service";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -22,7 +26,7 @@ export async function POST(request: Request) {
 
   try {
     const result = await runOutboxWorker({
-      handlers: {},
+      handlers: createNotificationOutboxHandlers(unavailableNotificationSender),
       workerId: correlationId,
     });
 

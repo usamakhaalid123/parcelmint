@@ -1,6 +1,7 @@
 export type CheckoutErrorCode =
   | "cart_empty"
   | "cart_unavailable"
+  | "checkout_blocked"
   | "coupon_invalid"
   | "delivery_unsupported"
   | "idempotency_conflict"

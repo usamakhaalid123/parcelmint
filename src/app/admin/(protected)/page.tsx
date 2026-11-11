@@ -37,15 +37,18 @@ export default function AdminDashboardPage() {
             Create products and variants, control lifecycle state, and adjust stock.
           </p>
         </Link>
-        <article className="min-h-56 rounded-3xl border border-[var(--border)] bg-surface p-[clamp(1.25rem,3vw,2rem)] opacity-65">
+        <Link
+          className="min-h-56 rounded-3xl border border-[var(--border)] bg-surface p-[clamp(1.25rem,3vw,2rem)] no-underline shadow-[var(--shadow-card)] transition hover:-translate-y-0.5 hover:border-primary motion-reduce:transform-none"
+          href="/admin/orders"
+        >
           <span className="text-xs font-extrabold tracking-[0.08em] text-primary uppercase">
-            Upcoming
+            Phase 5
           </span>
           <h2 className="my-4 max-w-none text-[clamp(1.5rem,3vw,2.25rem)]">Orders</h2>
           <p className="max-w-lg text-[var(--muted)]">
-            Verification, fulfillment, delivery, and returns arrive in later phases.
+            Verify COD orders, manage packing and courier handoff, and record delivery events.
           </p>
-        </article>
+        </Link>
       </section>
     </main>
   );
