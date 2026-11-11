@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import { requirePermission } from "@/modules/auth/server/require-permission";
 import { adminStyles } from "@/modules/catalog/components/admin-styles";
+import { permittedReturnTransitions } from "@/modules/orders/domain/return-policy";
 import { permittedShipmentTransitions } from "@/modules/orders/domain/state-policy";
 import {
   addAdminNoteAction,
@@ -13,9 +14,11 @@ import {
   handoffOrderAction,
   markPackedAction,
   recordDeliveryAttemptAction,
+  recordOfflineRefundAction,
   rejectOrderAction,
   startProcessingAction,
   transitionShipmentAction,
+  transitionReturnAction,
 } from "@/modules/orders/server/actions";
 import { getAdminOrder } from "@/modules/orders/server/order-service";
 import { formatMoney } from "@/modules/storefront/components/product-card";
@@ -258,6 +261,88 @@ export default async function AdminOrderPage({
             <OperationForm action={cancelOrderAction} button="Cancel order" orderId={order.id} />
           ) : null}
         </div>
+      </section>
+
+      <section className={adminStyles.section}>
+        <h2>Returns and offline refunds</h2>
+        {detail.returns.length === 0 ? <p>No returns requested.</p> : null}
+        {detail.returns.map((entry) => (
+          <article
+            className="mb-4 rounded-xl bg-white p-4"
+            key={`${entry.returnId}-${entry.itemId}`}
+          >
+            <h3>{entry.productName}</h3>
+            <p>
+              {entry.status.replaceAll("_", " ")} · requested {entry.requestedQuantity} · approved{" "}
+              {entry.approvedQuantity} · received {entry.receivedQuantity} · sellable{" "}
+              {entry.sellableQuantity}
+            </p>
+            {permittedReturnTransitions(entry.status).length > 0 ? (
+              <form action={transitionReturnAction} className={adminStyles.compactForm}>
+                <input name="orderId" type="hidden" value={order.id} />
+                <input name="returnId" type="hidden" value={entry.returnId} />
+                <input name="itemId" type="hidden" value={entry.itemId} />
+                <label>
+                  Next return state
+                  <select name="nextState" required>
+                    {permittedReturnTransitions(entry.status).map((state) => (
+                      <option key={state} value={state}>
+                        {state.replaceAll("_", " ")}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Sellable quantity after inspection
+                  <input
+                    max={entry.receivedQuantity}
+                    min={0}
+                    name="sellableQuantity"
+                    type="number"
+                    defaultValue={0}
+                  />
+                </label>
+                <label>
+                  Reason
+                  <input minLength={3} name="reason" required />
+                </label>
+                <button className={adminStyles.primaryAction} type="submit">
+                  Update return
+                </button>
+              </form>
+            ) : null}
+            {entry.status === "resolved" && entry.refundAmountMinor === null ? (
+              <form action={recordOfflineRefundAction} className={adminStyles.compactForm}>
+                <input name="orderId" type="hidden" value={order.id} />
+                <input name="returnId" type="hidden" value={entry.returnId} />
+                <input name="currencyCode" type="hidden" value={order.currencyCode} />
+                <label>
+                  Refund amount (minor units)
+                  <input min={1} name="amountMinor" required type="number" />
+                </label>
+                <label>
+                  Method
+                  <select name="method">
+                    <option value="bank_transfer">Bank transfer</option>
+                    <option value="mobile_wallet">Mobile wallet</option>
+                    <option value="cash">Cash</option>
+                    <option value="other">Other</option>
+                  </select>
+                </label>
+                <label>
+                  Reference
+                  <input minLength={2} name="externalReference" required />
+                </label>
+                <label>
+                  <input name="recipientConfirmed" type="checkbox" /> Recipient confirmed
+                </label>
+                <button className={adminStyles.secondaryAction} type="submit">
+                  Record offline refund
+                </button>
+              </form>
+            ) : null}
+          </article>
+        ))}
       </section>
 
       <section className={adminStyles.section}>

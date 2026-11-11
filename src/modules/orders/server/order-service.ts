@@ -21,6 +21,9 @@ import {
   orderVerifications,
   outboxEvents,
   reservationFinalizations,
+  refundRecords,
+  returnItems,
+  returnRequests,
   shipmentEvents,
   shipments,
 } from "@/db/schema";
@@ -893,36 +896,55 @@ export async function listAdminOrders(
 export async function getAdminOrder(orderId: string, database: Database = getDatabase()) {
   const [order] = await database.select().from(orders).where(eq(orders.id, orderId)).limit(1);
   if (order === undefined) return null;
-  const [items, addresses, events, notes, riskFlags, fulfillmentRows] = await Promise.all([
-    database
-      .select()
-      .from(orderItems)
-      .where(eq(orderItems.orderId, orderId))
-      .orderBy(asc(orderItems.createdAt)),
-    database.select().from(orderAddresses).where(eq(orderAddresses.orderId, orderId)),
-    database
-      .select()
-      .from(orderOperationEvents)
-      .where(eq(orderOperationEvents.orderId, orderId))
-      .orderBy(desc(orderOperationEvents.occurredAt)),
-    database
-      .select()
-      .from(adminNotes)
-      .where(eq(adminNotes.orderId, orderId))
-      .orderBy(desc(adminNotes.createdAt)),
-    database.select().from(orderRiskFlags).where(eq(orderRiskFlags.orderId, orderId)),
-    database
-      .select({
-        fulfillmentId: fulfillments.id,
-        shipmentId: shipments.id,
-        shipmentStatus: shipments.status,
-        courierCode: shipments.courierCode,
-        trackingNumber: shipments.trackingNumber,
-      })
-      .from(fulfillments)
-      .leftJoin(shipments, eq(shipments.fulfillmentId, fulfillments.id))
-      .where(eq(fulfillments.orderId, orderId)),
-  ]);
+  const [items, addresses, events, notes, riskFlags, fulfillmentRows, returnRows] =
+    await Promise.all([
+      database
+        .select()
+        .from(orderItems)
+        .where(eq(orderItems.orderId, orderId))
+        .orderBy(asc(orderItems.createdAt)),
+      database.select().from(orderAddresses).where(eq(orderAddresses.orderId, orderId)),
+      database
+        .select()
+        .from(orderOperationEvents)
+        .where(eq(orderOperationEvents.orderId, orderId))
+        .orderBy(desc(orderOperationEvents.occurredAt)),
+      database
+        .select()
+        .from(adminNotes)
+        .where(eq(adminNotes.orderId, orderId))
+        .orderBy(desc(adminNotes.createdAt)),
+      database.select().from(orderRiskFlags).where(eq(orderRiskFlags.orderId, orderId)),
+      database
+        .select({
+          fulfillmentId: fulfillments.id,
+          shipmentId: shipments.id,
+          shipmentStatus: shipments.status,
+          courierCode: shipments.courierCode,
+          trackingNumber: shipments.trackingNumber,
+        })
+        .from(fulfillments)
+        .leftJoin(shipments, eq(shipments.fulfillmentId, fulfillments.id))
+        .where(eq(fulfillments.orderId, orderId)),
+      database
+        .select({
+          approvedQuantity: returnItems.approvedQuantity,
+          itemId: returnItems.id,
+          productName: orderItems.productName,
+          receivedQuantity: returnItems.receivedQuantity,
+          refundAmountMinor: refundRecords.amountMinor,
+          requestedQuantity: returnItems.requestedQuantity,
+          returnId: returnRequests.id,
+          sellableQuantity: returnItems.sellableQuantity,
+          status: returnRequests.status,
+        })
+        .from(returnRequests)
+        .innerJoin(returnItems, eq(returnItems.returnId, returnRequests.id))
+        .innerJoin(orderItems, eq(orderItems.id, returnItems.orderItemId))
+        .leftJoin(refundRecords, eq(refundRecords.returnId, returnRequests.id))
+        .where(eq(returnRequests.orderId, orderId))
+        .orderBy(desc(returnRequests.requestedAt)),
+    ]);
   return {
     addresses,
     events,
@@ -930,6 +952,7 @@ export async function getAdminOrder(orderId: string, database: Database = getDat
     items,
     notes,
     order,
+    returns: returnRows,
     riskFlags,
   };
 }

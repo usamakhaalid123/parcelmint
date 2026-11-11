@@ -6,6 +6,7 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 
 import { logger } from "@/lib/logger";
+import { getCurrentPrincipal } from "@/modules/auth/server/current-principal";
 import { CheckoutError } from "@/modules/checkout/domain/errors";
 import {
   cartItemInputSchema,
@@ -139,7 +140,15 @@ export async function submitCheckoutAction(
         status: "error",
       };
     }
-    const order = await createOrderFromCart(cart.id, input);
+    const principal = await getCurrentPrincipal();
+    const order = await createOrderFromCart(
+      cart.id,
+      input,
+      undefined,
+      principal?.accountType === "customer" && principal.status === "active"
+        ? principal.userId
+        : null,
+    );
     orderId = order.orderId;
   } catch (error) {
     const code = error instanceof CheckoutError ? error.code : "invalid_input";

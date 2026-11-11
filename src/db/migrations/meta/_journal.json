@@ -50,6 +50,13 @@
       "when": 1794399259849,
       "tag": "0006_fresh_roulette",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1794414125482,
+      "tag": "0007_swift_kid_colt",
+      "breakpoints": true
     }
   ]
 }

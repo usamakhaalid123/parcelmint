@@ -50,12 +50,16 @@ export default async function ConfirmationPage({
           </div>
         </dl>
         <p className="text-sm text-[var(--muted)]">
-          Save the order number for support. Order tracking with secure phone verification is
-          introduced in the customer-account phase.
+          Save the order number for secure phone-verified tracking.
         </p>
-        <Link className="button-primary inline-flex" href="/products">
-          Continue shopping
-        </Link>
+        <div className="flex justify-center gap-3">
+          <Link className="button-primary inline-flex" href="/track">
+            Track order
+          </Link>
+          <Link className="button-secondary inline-flex" href="/products">
+            Continue shopping
+          </Link>
+        </div>
       </section>
     </StorefrontMain>
   );

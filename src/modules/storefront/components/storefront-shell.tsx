@@ -28,6 +28,18 @@ export function StorefrontHeader() {
             Help
           </Link>
           <Link
+            className="rounded-lg px-3 py-2 font-bold no-underline hover:bg-surface"
+            href="/track"
+          >
+            Track order
+          </Link>
+          <Link
+            className="rounded-lg px-3 py-2 font-bold no-underline hover:bg-surface"
+            href="/account"
+          >
+            Account
+          </Link>
+          <Link
             className="rounded-lg bg-primary px-3 py-2 font-bold text-white no-underline"
             href="/cart"
           >

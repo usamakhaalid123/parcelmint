@@ -10,6 +10,7 @@ const e2eBaseUrl = `http://127.0.0.1:${e2ePort}`;
 export default defineConfig({
   testDir: "./tests/e2e",
   fullyParallel: true,
+  workers: 1,
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 2 : 0,
   reporter: process.env.CI ? "github" : "html",

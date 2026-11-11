@@ -70,12 +70,13 @@ function normalizeAddressForRisk(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
-function requestHash(cartId: string, input: CheckoutInput): string {
+function requestHash(cartId: string, input: CheckoutInput, customerUserId: string | null): string {
   return sha256(
     JSON.stringify({
       addressLine: input.addressLine,
       cartId,
       customerName: input.customerName,
+      customerUserId,
       deliveryInstructions: input.deliveryInstructions,
       deliveryZoneId: input.deliveryZoneId,
       email: input.email,
@@ -129,8 +130,9 @@ export async function createOrderFromCart(
   cartId: string,
   input: CheckoutInput,
   database: Database = getDatabase(),
+  customerUserId: string | null = null,
 ): Promise<CheckoutResult> {
-  const hash = requestHash(cartId, input);
+  const hash = requestHash(cartId, input, customerUserId);
 
   return database.transaction(async (transaction) => {
     await transaction.execute(sql`select pg_advisory_xact_lock(hashtext(${input.idempotencyKey}))`);
@@ -322,6 +324,7 @@ export async function createOrderFromCart(
     await transaction.insert(orders).values({
       cartId,
       currencyCode,
+      customerUserId,
       customerName: input.customerName,
       deliveryInstructions: input.deliveryInstructions,
       deliveryZoneId: input.deliveryZoneId,

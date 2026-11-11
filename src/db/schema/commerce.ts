@@ -200,6 +200,7 @@ export const orders = pgTable(
     id: uuid("id").primaryKey().defaultRandom(),
     orderNumber: text("order_number").notNull(),
     cartId: uuid("cart_id").references(() => carts.id, { onDelete: "set null" }),
+    customerUserId: uuid("customer_user_id").references(() => users.id, { onDelete: "set null" }),
     deliveryZoneId: uuid("delivery_zone_id").references(() => deliveryZones.id, {
       onDelete: "restrict",
     }),
@@ -225,6 +226,7 @@ export const orders = pgTable(
   (table) => [
     uniqueIndex("orders_order_number_unique").on(table.orderNumber),
     index("orders_mobile_created_at_idx").on(table.mobileNumber, table.createdAt),
+    index("orders_customer_created_at_idx").on(table.customerUserId, table.createdAt),
     index("orders_states_idx").on(table.verificationState, table.fulfillmentState),
     check("orders_customer_name_not_blank", sql`length(trim(${table.customerName})) > 0`),
     check("orders_mobile_not_blank", sql`length(trim(${table.mobileNumber})) > 0`),

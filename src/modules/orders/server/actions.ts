@@ -18,6 +18,8 @@ import {
   transitionFulfillment,
   transitionShipment,
 } from "@/modules/orders/server/order-service";
+import { recordOfflineRefund, transitionReturn } from "@/modules/orders/server/return-service";
+import type { ReturnState } from "@/modules/orders/domain/return-policy";
 import type { ShipmentState } from "@/modules/orders/domain/state-policy";
 
 function stringValue(formData: FormData, key: string): string {
@@ -116,4 +118,47 @@ export async function addAdminNoteAction(formData: FormData): Promise<never> {
   return runOrderAction(formData, (base) =>
     addAdminNote({ ...base, note: stringValue(formData, "note") }),
   );
+}
+
+export async function transitionReturnAction(formData: FormData): Promise<never> {
+  const orderId = stringValue(formData, "orderId");
+  const returnId = stringValue(formData, "returnId");
+  const itemId = stringValue(formData, "itemId");
+  const sellable = Number(stringValue(formData, "sellableQuantity") || "0");
+  try {
+    await transitionReturn({
+      actor: await getCurrentPrincipal(),
+      nextState: stringValue(formData, "nextState") as ReturnState,
+      reason: stringValue(formData, "reason"),
+      returnId,
+      sellableQuantities: itemId === "" ? undefined : { [itemId]: sellable },
+    });
+  } catch (error) {
+    logger.warn("Return transition failed", { error, orderId, returnId });
+    redirect(`/admin/orders/${orderId}?error=return_failed`);
+  }
+  revalidatePath(`/admin/orders/${orderId}`);
+  redirect(`/admin/orders/${orderId}?notice=return_updated`);
+}
+
+export async function recordOfflineRefundAction(formData: FormData): Promise<never> {
+  const orderId = stringValue(formData, "orderId");
+  const returnId = stringValue(formData, "returnId");
+  try {
+    await recordOfflineRefund({
+      actor: await getCurrentPrincipal(),
+      amountMinor: Number(stringValue(formData, "amountMinor")),
+      currencyCode: stringValue(formData, "currencyCode").toUpperCase(),
+      externalReference: stringValue(formData, "externalReference"),
+      method: stringValue(formData, "method") as
+        "bank_transfer" | "cash" | "mobile_wallet" | "other",
+      recipientConfirmed: stringValue(formData, "recipientConfirmed") === "on",
+      returnId,
+    });
+  } catch (error) {
+    logger.warn("Refund record failed", { error, orderId, returnId });
+    redirect(`/admin/orders/${orderId}?error=refund_failed`);
+  }
+  revalidatePath(`/admin/orders/${orderId}`);
+  redirect(`/admin/orders/${orderId}?notice=refund_recorded`);
 }

@@ -14,6 +14,7 @@ import {
   cartItems,
   carts,
   categories,
+  customerProfiles,
   coupons,
   deliveryZones,
   fulfillments,
@@ -34,10 +35,13 @@ import {
   productVariants,
   products,
   rolePermissions,
+  refundRecords,
+  returnItems,
   roles,
   shippingRates,
   shipmentEvents,
   shipments,
+  trackingChallenges,
   userRoles,
   users,
 } from "@/db/schema";
@@ -92,8 +96,25 @@ import {
   transitionShipment,
 } from "@/modules/orders/server/order-service";
 import { issueOrderOtp, verifyOrderOtp } from "@/modules/orders/server/otp-service";
+import {
+  createCustomerTrackingSession,
+  getTrackedOrder,
+  issueTrackingChallenge,
+  verifyTrackingChallenge,
+} from "@/modules/orders/server/tracking-service";
 import { createNotificationOutboxHandlers } from "@/modules/orders/server/notification-service";
 import { createOperationalBlock } from "@/modules/orders/server/blocklist-service";
+import {
+  deleteCustomerAddress,
+  getCustomerAccount,
+  saveCustomerAddress,
+} from "@/modules/orders/server/customer-account-service";
+import {
+  cancelTrackedOrder,
+  recordOfflineRefund,
+  requestTrackedReturn,
+  transitionReturn,
+} from "@/modules/orders/server/return-service";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 
@@ -227,11 +248,15 @@ describe.skipIf(testDatabaseUrl === undefined)("phase 1 database foundation", ()
     };
   }
 
-  async function seedSubmittedOrder(initialQuantity = 3, mobileNumber = "+923006666666") {
+  async function seedSubmittedOrder(
+    initialQuantity = 3,
+    mobileNumber = "+923006666666",
+    purchaseQuantity = 1,
+  ) {
     const product = await seedCheckoutProduct(initialQuantity);
     const deliveryZoneId = await seedDeliveryZone();
     const cart = await createCart(`phase5-${randomUUID()}`, database);
-    await addCartItem(cart.id, product.variantId, 1, database);
+    await addCartItem(cart.id, product.variantId, purchaseQuantity, database);
     const order = await createOrderFromCart(
       cart.id,
       {
@@ -249,6 +274,60 @@ describe.skipIf(testDatabaseUrl === undefined)("phase 1 database foundation", ()
       database,
     );
     return { order, product };
+  }
+
+  async function deliverOrder(orderId: string, principal: StaffPrincipal) {
+    await confirmOrderManually(
+      { actor: principal, correlationId: randomUUID(), orderId, reason: "Confirmed for delivery" },
+      database,
+    );
+    await transitionFulfillment(
+      {
+        actor: principal,
+        correlationId: randomUUID(),
+        nextState: "processing",
+        orderId,
+        reason: "Started processing",
+      },
+      database,
+    );
+    await transitionFulfillment(
+      {
+        actor: principal,
+        correlationId: randomUUID(),
+        nextState: "packed",
+        orderId,
+        reason: "Packed order",
+      },
+      database,
+    );
+    await createShipmentLabel(
+      {
+        actor: principal,
+        correlationId: randomUUID(),
+        courierCode: "RETURN_TEST",
+        orderId,
+        reason: "Created label",
+        trackingNumber: `RET-${randomUUID()}`,
+      },
+      database,
+    );
+    await handoffOrder(
+      { actor: principal, correlationId: randomUUID(), orderId, reason: "Handed to courier" },
+      database,
+    );
+    for (const nextState of ["in_transit", "out_for_delivery", "delivered"] as const) {
+      await transitionShipment(
+        {
+          actor: principal,
+          correlationId: randomUUID(),
+          nextState,
+          orderId,
+          reason: `Moved to ${nextState}`,
+        },
+        database,
+      );
+    }
   }
 
   it("seeds the authorization catalog idempotently", async () => {
@@ -1840,5 +1919,250 @@ describe.skipIf(testDatabaseUrl === undefined)("phase 1 database foundation", ()
     expect(persistedOrder?.id).toBe(order.orderId);
     expect(notification?.status).toBe("failed");
     expect(attempts).toContainEqual({ outcome: "failed" });
+  });
+
+  it("requires phone verification before exposing guest order tracking", async () => {
+    const { order } = await seedSubmittedOrder(2, "+923001919191");
+    const issued = await issueTrackingChallenge(
+      { mobileNumber: "+92 300 1919191", orderNumber: order.orderNumber.toLowerCase() },
+      database,
+    );
+    expect(issued.developmentCode).toMatch(/^\d{6}$/);
+    const verified = await verifyTrackingChallenge(
+      { challengeId: issued.challengeId, code: issued.developmentCode ?? "" },
+      database,
+    );
+    const tracked = await getTrackedOrder(order.orderNumber, verified.token, database);
+    expect(tracked?.order.id).toBe(order.orderId);
+    expect(tracked?.items).toHaveLength(1);
+    await expect(getTrackedOrder(order.orderNumber, "invalid-token", database)).resolves.toBeNull();
+  });
+
+  it("does not reveal whether guest tracking lookup details matched", async () => {
+    const issued = await issueTrackingChallenge(
+      { mobileNumber: "+923009999999", orderNumber: "PM-NOT-AN-ORDER" },
+      database,
+    );
+    const [challenge] = await database
+      .select({ orderId: trackingChallenges.orderId })
+      .from(trackingChallenges)
+      .where(eq(trackingChallenges.id, issued.challengeId));
+    expect(challenge?.orderId).toBeNull();
+    await expect(
+      verifyTrackingChallenge(
+        { challengeId: issued.challengeId, code: issued.developmentCode ?? "" },
+        database,
+      ),
+    ).rejects.toThrow("tracking_verification_failed");
+  });
+
+  it("allows a verified guest to cancel only before courier handoff", async () => {
+    const { order } = await seedSubmittedOrder(2, "+923002020202");
+    const issued = await issueTrackingChallenge(
+      { mobileNumber: "+923002020202", orderNumber: order.orderNumber },
+      database,
+    );
+    const verified = await verifyTrackingChallenge(
+      { challengeId: issued.challengeId, code: issued.developmentCode ?? "" },
+      database,
+    );
+    await cancelTrackedOrder(
+      {
+        orderNumber: order.orderNumber,
+        reason: "Customer changed their mind",
+        token: verified.token,
+      },
+      database,
+    );
+    const [cancelled] = await database
+      .select({ lifecycle: orders.lifecycleState, fulfillment: orders.fulfillmentState })
+      .from(orders)
+      .where(eq(orders.id, order.orderId));
+    const [reservation] = await database
+      .select({ state: inventoryReservations.state })
+      .from(inventoryReservations)
+      .where(eq(inventoryReservations.orderId, order.orderId));
+    expect(cancelled).toEqual({ lifecycle: "cancelled", fulfillment: "cancelled" });
+    expect(reservation?.state).toBe("released");
+  });
+
+  it("processes a partial return and restores only inspected sellable units", async () => {
+    const { order, product } = await seedSubmittedOrder(5, "+923003030303", 2);
+    const principal = await seedOrderPrincipal();
+    await deliverOrder(order.orderId, principal);
+    const issued = await issueTrackingChallenge(
+      { mobileNumber: "+923003030303", orderNumber: order.orderNumber },
+      database,
+    );
+    const verified = await verifyTrackingChallenge(
+      { challengeId: issued.challengeId, code: issued.developmentCode ?? "" },
+      database,
+    );
+    const [orderItem] = await database
+      .select({ id: orderItems.id })
+      .from(orderItems)
+      .where(eq(orderItems.orderId, order.orderId));
+    if (orderItem === undefined) throw new Error("Return order item missing");
+    const returnId = await requestTrackedReturn(
+      {
+        orderItemId: orderItem.id,
+        orderNumber: order.orderNumber,
+        quantity: 1,
+        reason: "Item did not fit",
+        token: verified.token,
+      },
+      database,
+    );
+    await expect(
+      requestTrackedReturn(
+        {
+          orderItemId: orderItem.id,
+          orderNumber: order.orderNumber,
+          quantity: 2,
+          reason: "Invalid cumulative quantity",
+          token: verified.token,
+        },
+        database,
+      ),
+    ).rejects.toThrow("return_quantity_invalid");
+    const unauthorized = await seedOrderPrincipal([]);
+    await expect(
+      transitionReturn(
+        { actor: unauthorized, nextState: "approved", reason: "Unauthorized approval", returnId },
+        database,
+      ),
+    ).rejects.toThrow("return_access_denied");
+    const deniedAudits = await database
+      .select({ outcome: auditLogs.outcome })
+      .from(auditLogs)
+      .where(
+        and(
+          eq(auditLogs.resourceId, returnId),
+          eq(auditLogs.action, "return.transition"),
+          eq(auditLogs.outcome, "denied"),
+        ),
+      );
+    expect(deniedAudits).toHaveLength(1);
+    for (const nextState of ["approved", "in_transit", "received"] as const) {
+      await transitionReturn(
+        { actor: principal, nextState, reason: `Return moved to ${nextState}`, returnId },
+        database,
+      );
+    }
+    const [returnItem] = await database
+      .select({ id: returnItems.id })
+      .from(returnItems)
+      .where(eq(returnItems.returnId, returnId));
+    if (returnItem === undefined) throw new Error("Return item missing");
+    await transitionReturn(
+      {
+        actor: principal,
+        nextState: "inspected",
+        reason: "One unit passed inspection",
+        returnId,
+        sellableQuantities: { [returnItem.id]: 1 },
+      },
+      database,
+    );
+    const [before] = await database
+      .select({ quantity: inventoryItems.onHandQuantity })
+      .from(inventoryItems)
+      .innerJoin(productVariants, eq(productVariants.id, inventoryItems.variantId))
+      .where(eq(productVariants.id, product.variantId));
+    await transitionReturn(
+      { actor: principal, nextState: "resolved", reason: "Return resolved", returnId },
+      database,
+    );
+    const [after] = await database
+      .select({ quantity: inventoryItems.onHandQuantity })
+      .from(inventoryItems)
+      .where(eq(inventoryItems.variantId, product.variantId));
+    expect(after?.quantity).toBe((before?.quantity ?? 0) + 1);
+    const movements = await database
+      .select({ delta: inventoryMovements.quantityDelta })
+      .from(inventoryMovements)
+      .where(
+        and(
+          eq(inventoryMovements.referenceType, "return"),
+          eq(inventoryMovements.referenceId, returnId),
+        ),
+      );
+    expect(movements).toContainEqual({ delta: 1 });
+    await recordOfflineRefund(
+      {
+        actor: principal,
+        amountMinor: 10_000,
+        currencyCode: "PKR",
+        externalReference: "BANK-RETURN-1",
+        method: "bank_transfer",
+        recipientConfirmed: true,
+        returnId,
+      },
+      database,
+    );
+    const refunds = await database
+      .select({ amount: refundRecords.amountMinor })
+      .from(refundRecords)
+      .where(eq(refundRecords.returnId, returnId));
+    expect(refunds).toEqual([{ amount: 10_000 }]);
+  });
+
+  it("isolates customer order history and saved addresses by customer", async () => {
+    const [firstUser, secondUser] = await database
+      .insert(users)
+      .values([
+        { accountType: "customer", identityId: randomUUID() },
+        { accountType: "customer", identityId: randomUUID() },
+      ])
+      .returning({ id: users.id });
+    if (firstUser === undefined || secondUser === undefined)
+      throw new Error("Customer seed failed");
+    await database.insert(customerProfiles).values([
+      { displayName: "First customer", userId: firstUser.id },
+      { displayName: "Second customer", userId: secondUser.id },
+    ]);
+    const firstPrincipal: StaffPrincipal = {
+      accountType: "customer",
+      permissionKeys: new Set(),
+      status: "active",
+      userId: firstUser.id,
+    };
+    const secondPrincipal: StaffPrincipal = { ...firstPrincipal, userId: secondUser.id };
+    const { order } = await seedSubmittedOrder();
+    await database
+      .update(orders)
+      .set({ customerUserId: firstUser.id })
+      .where(eq(orders.id, order.orderId));
+    await saveCustomerAddress(
+      {
+        ...firstPrincipal,
+      },
+      {
+        addressLine: "10 Customer Street",
+        deliveryArea: "Test area",
+        isDefault: true,
+        label: "Home",
+        landmark: null,
+        mobileNumber: "+923004040404",
+        postalCode: null,
+        recipientName: "First customer",
+      },
+      database,
+    );
+    const firstAccount = await getCustomerAccount(firstPrincipal, database);
+    const secondAccount = await getCustomerAccount(secondPrincipal, database);
+    expect(firstAccount.addresses).toHaveLength(1);
+    expect(secondAccount.addresses).toHaveLength(0);
+    expect(firstAccount.orders).toHaveLength(1);
+    expect(secondAccount.orders).toHaveLength(0);
+
+    const session = await createCustomerTrackingSession(firstUser.id, order.orderNumber, database);
+    expect(await getTrackedOrder(order.orderNumber, session.token, database)).not.toBeNull();
+    await expect(
+      createCustomerTrackingSession(secondUser.id, order.orderNumber, database),
+    ).rejects.toThrow("order_access_denied");
+
+    await deleteCustomerAddress(firstPrincipal, firstAccount.addresses[0]?.id ?? "", database);
+    expect((await getCustomerAccount(firstPrincipal, database)).addresses).toHaveLength(0);
   });
 });
