@@ -55,7 +55,8 @@ jobs:
           pnpm build
 
   browser:
-    runs-on: ubuntu-latest
+    # Keep Playwright on a stable image while ubuntu-latest migrates to 26.04.
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     services:
       postgres:
@@ -91,11 +92,14 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Install Chromium
+      - name: Install Chromium system dependencies
+        run: pnpm exec playwright install-deps chromium
+
+      - name: Install Chromium headless shell
         env:
           # GitHub-hosted runners can receive large browser artifacts slowly.
           PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT: 120000
-        run: pnpm exec playwright install --with-deps --only-shell chromium
+        run: pnpm exec playwright install --only-shell chromium
 
       - name: Prepare browser database
         run: pnpm db:migrate
