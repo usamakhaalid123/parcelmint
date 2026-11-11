@@ -18,7 +18,13 @@ export default defineConfig({
     trace: "on-first-retry",
   },
   projects: [
-    { name: "chromium", use: { ...devices["Desktop Chrome"] } },
+    {
+      name: "chromium",
+      use: {
+        ...devices["Desktop Chrome"],
+        ...(process.env.CI ? { channel: "chrome" } : {}),
+      },
+    },
     { name: "mobile-chrome", use: { ...devices["Pixel 7"] } },
   ],
   webServer: {

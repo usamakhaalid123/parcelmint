@@ -92,14 +92,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Install Chromium system dependencies
-        run: pnpm exec playwright install-deps chromium
-
-      - name: Install Chromium headless shell
-        env:
-          # GitHub-hosted runners can receive large browser artifacts slowly.
-          PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT: 120000
-        run: pnpm exec playwright install --only-shell chromium
+      - name: Verify preinstalled Chrome
+        run: google-chrome --version
 
       - name: Prepare browser database
         run: pnpm db:migrate
