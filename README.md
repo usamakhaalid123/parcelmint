@@ -62,6 +62,9 @@ Catalog, inventory, product-image storage, and CSV operations are documented in
 Public catalog discovery, storefront caching, indexing rules, and browser-test isolation are
 documented in [`docs/operations/storefront.md`](docs/operations/storefront.md).
 
+Guest cart, checkout, pricing, idempotency, and reservation-expiry operations are documented in
+[`docs/operations/checkout.md`](docs/operations/checkout.md).
+
 ## Repository guidance
 
 Read `AGENTS.md` before changing the application. It routes work to the relevant sections of the

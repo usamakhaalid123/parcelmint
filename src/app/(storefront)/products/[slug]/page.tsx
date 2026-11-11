@@ -4,6 +4,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { getServerEnvironment } from "@/config/env";
+import { AddToCartForm } from "@/modules/checkout/components/add-to-cart-form";
 import {
   formatMoney,
   minorUnitsToMajor,
@@ -202,6 +203,7 @@ export default async function ProductPage({
               <dd className="mt-1 font-mono text-sm">{selectedVariant?.sku ?? "Unavailable"}</dd>
             </div>
           </dl>
+          <AddToCartForm available={available} variantId={selectedVariant?.id ?? ""} />
           <div className="rounded-2xl border border-[var(--border)] bg-surface p-5">
             <h2 className="text-xl">Delivery and returns</h2>
             <p className="text-sm text-[var(--muted)]">

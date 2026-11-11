@@ -27,6 +27,12 @@ export function StorefrontHeader() {
           >
             Help
           </Link>
+          <Link
+            className="rounded-lg bg-primary px-3 py-2 font-bold text-white no-underline"
+            href="/cart"
+          >
+            Cart
+          </Link>
         </nav>
       </div>
     </header>

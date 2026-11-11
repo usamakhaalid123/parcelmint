@@ -11,9 +11,16 @@ import * as schema from "@/db/schema";
 import {
   auditLogs,
   brands,
+  cartItems,
+  carts,
   categories,
+  coupons,
+  deliveryZones,
   inventoryItems,
   inventoryMovements,
+  inventoryReservations,
+  orderItems,
+  orders,
   outboxEvents,
   permissions,
   productCategories,
@@ -22,6 +29,7 @@ import {
   products,
   rolePermissions,
   roles,
+  shippingRates,
   userRoles,
   users,
 } from "@/db/schema";
@@ -55,6 +63,16 @@ import {
   getStorefrontProduct,
   listStorefrontProducts,
 } from "@/modules/storefront/server/storefront-repository";
+import {
+  addCartItem,
+  applyCartCoupon,
+  createCart,
+  mergeCarts,
+} from "@/modules/checkout/server/cart-repository";
+import { createOrderFromCart } from "@/modules/checkout/server/checkout-service";
+import { releaseExpiredReservations } from "@/modules/checkout/server/reservation-expiry-service";
+import { CheckoutError } from "@/modules/checkout";
+import type { CheckoutInput } from "@/modules/checkout";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 
@@ -72,6 +90,18 @@ describe.skipIf(testDatabaseUrl === undefined)("phase 1 database foundation", ()
     await migrate(database, { migrationsFolder: "src/db/migrations" });
     await pool.query(`
       TRUNCATE TABLE
+        rate_limit_events,
+        idempotency_keys,
+        coupon_redemptions,
+        inventory_reservations,
+        order_addresses,
+        order_items,
+        orders,
+        shipping_rates,
+        delivery_zones,
+        cart_items,
+        carts,
+        coupons,
         audit_logs,
         outbox_events,
         inventory_movements,
@@ -99,6 +129,66 @@ describe.skipIf(testDatabaseUrl === undefined)("phase 1 database foundation", ()
   afterAll(async () => {
     await pool.end();
   });
+
+  async function seedCheckoutProduct(initialQuantity: number) {
+    const token = randomUUID();
+    const [actor] = await database
+      .insert(users)
+      .values({ accountType: "staff", identityId: randomUUID() })
+      .returning({ id: users.id });
+    const created = await createCompleteProduct(
+      {
+        actor: {
+          accountType: "staff",
+          permissionKeys: new Set(["catalog.manage", "inventory.adjust"]),
+          status: "active",
+          userId: actor?.id ?? "",
+        },
+        basePriceMinor: 10_000,
+        categories: [],
+        correlationId: randomUUID(),
+        currencyCode: "PKR",
+        description: "Checkout integration product",
+        initialQuantity,
+        inventoryReason: "Checkout integration stock",
+        lowStockThreshold: 0,
+        name: `Checkout product ${token}`,
+        optionValues: [],
+        slug: `checkout-${token}`,
+        status: "active",
+        variant: {
+          isActive: true,
+          sku: `CHECKOUT-${token}`,
+          stockBehavior: "tracked",
+          title: "Default",
+        },
+      },
+      database,
+    );
+    const [variant] = await database
+      .select({ id: productVariants.id })
+      .from(productVariants)
+      .where(eq(productVariants.productId, created.productId));
+    if (variant === undefined) throw new Error("Checkout seed did not create a variant");
+    return { productId: created.productId, variantId: variant.id };
+  }
+
+  async function seedDeliveryZone() {
+    const [zone] = await database
+      .insert(deliveryZones)
+      .values({ code: `ZONE_${randomUUID().replaceAll("-", "").toUpperCase()}`, name: "Test area" })
+      .returning({ id: deliveryZones.id });
+    if (zone === undefined) throw new Error("Delivery zone creation failed");
+    await database.insert(shippingRates).values({
+      currencyCode: "PKR",
+      deliveryZoneId: zone.id,
+      estimatedDaysMax: 3,
+      estimatedDaysMin: 1,
+      feeMinor: 500,
+      name: "Standard delivery",
+    });
+    return zone.id;
+  }
 
   it("seeds the authorization catalog idempotently", async () => {
     const [roleCount] = await database.select({ value: count() }).from(roles);
@@ -930,5 +1020,261 @@ describe.skipIf(testDatabaseUrl === undefined)("phase 1 database foundation", ()
     expect(page.items[0]).toMatchObject({ available: true, slug: activeSlug });
     expect(detail).toMatchObject({ slug: activeSlug });
     expect(await getStorefrontProduct(`storefront-draft-${token}`, database)).toBeNull();
+  });
+
+  it("creates one idempotent order and snapshots the latest server price", async () => {
+    const product = await seedCheckoutProduct(3);
+    const deliveryZoneId = await seedDeliveryZone();
+    const cart = await createCart(`checkout-token-${randomUUID()}`, database);
+    await addCartItem(cart.id, product.variantId, 1, database);
+    await database
+      .update(products)
+      .set({ basePriceMinor: 12_500 })
+      .where(eq(products.id, product.productId));
+    const input: CheckoutInput = {
+      addressLine: "12 Integration Test Street",
+      customerName: "Integration Buyer",
+      deliveryInstructions: null,
+      deliveryZoneId,
+      email: null,
+      idempotencyKey: randomUUID(),
+      landmark: null,
+      mobileNumber: "+923001234567",
+      policyConsent: "on",
+      postalCode: null,
+    };
+
+    const [first, repeated] = await Promise.all([
+      createOrderFromCart(cart.id, input, database),
+      createOrderFromCart(cart.id, input, database),
+    ]);
+    const [orderCount] = await database.select({ value: count() }).from(orders);
+    const [snapshot] = await database
+      .select({ unitPriceMinor: orderItems.unitPriceMinor })
+      .from(orderItems)
+      .where(eq(orderItems.orderId, first.orderId));
+
+    expect(repeated.orderId).toBe(first.orderId);
+    expect(first.grandTotalMinor).toBe(13_000);
+    expect(snapshot?.unitPriceMinor).toBe(12_500);
+    expect(orderCount?.value).toBe(1);
+    await expect(
+      createOrderFromCart(cart.id, { ...input, addressLine: "99 Changed Address" }, database),
+    ).rejects.toEqual(new CheckoutError("idempotency_conflict"));
+    await expect(
+      database
+        .update(orderItems)
+        .set({ productName: "Mutated history" })
+        .where(eq(orderItems.orderId, first.orderId)),
+    ).rejects.toMatchObject({ cause: { code: "55000" } });
+  });
+
+  it("serializes concurrent last-item checkout without overselling", async () => {
+    const product = await seedCheckoutProduct(1);
+    const deliveryZoneId = await seedDeliveryZone();
+    const firstCart = await createCart(`last-item-a-${randomUUID()}`, database);
+    const secondCart = await createCart(`last-item-b-${randomUUID()}`, database);
+    await Promise.all([
+      addCartItem(firstCart.id, product.variantId, 1, database),
+      addCartItem(secondCart.id, product.variantId, 1, database),
+    ]);
+    const baseInput: Omit<CheckoutInput, "idempotencyKey"> = {
+      addressLine: "34 Concurrency Road",
+      customerName: "Concurrent Buyer",
+      deliveryInstructions: null,
+      deliveryZoneId,
+      email: null,
+      landmark: null,
+      mobileNumber: "+923009876543",
+      policyConsent: "on",
+      postalCode: null,
+    };
+
+    const results = await Promise.allSettled([
+      createOrderFromCart(firstCart.id, { ...baseInput, idempotencyKey: randomUUID() }, database),
+      createOrderFromCart(secondCart.id, { ...baseInput, idempotencyKey: randomUUID() }, database),
+    ]);
+    const fulfilled = results.filter((result) => result.status === "fulfilled");
+    const rejected = results.filter((result) => result.status === "rejected");
+    const [inventory] = await database
+      .select({ onHand: inventoryItems.onHandQuantity, reserved: inventoryItems.reservedQuantity })
+      .from(inventoryItems)
+      .innerJoin(productVariants, eq(productVariants.id, inventoryItems.variantId))
+      .where(eq(productVariants.id, product.variantId));
+
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]).toMatchObject({ reason: { code: "stock_unavailable" } });
+    expect(inventory).toEqual({ onHand: 1, reserved: 1 });
+  });
+
+  it("rejects a product that becomes unavailable before checkout", async () => {
+    const product = await seedCheckoutProduct(2);
+    const deliveryZoneId = await seedDeliveryZone();
+    const cart = await createCart(`unavailable-${randomUUID()}`, database);
+    await addCartItem(cart.id, product.variantId, 1, database);
+    await database
+      .update(products)
+      .set({ status: "archived" })
+      .where(eq(products.id, product.productId));
+
+    await expect(
+      createOrderFromCart(
+        cart.id,
+        {
+          addressLine: "91 Unavailable Product Road",
+          customerName: "Availability Buyer",
+          deliveryInstructions: null,
+          deliveryZoneId,
+          email: null,
+          idempotencyKey: randomUUID(),
+          landmark: null,
+          mobileNumber: "+923004444444",
+          policyConsent: "on",
+          postalCode: null,
+        },
+        database,
+      ),
+    ).rejects.toEqual(new CheckoutError("cart_unavailable"));
+  });
+
+  it("rejects an unsupported delivery area without creating an order", async () => {
+    const product = await seedCheckoutProduct(2);
+    const cart = await createCart(`unsupported-zone-${randomUUID()}`, database);
+    await addCartItem(cart.id, product.variantId, 1, database);
+    const [ordersBefore] = await database.select({ value: count() }).from(orders);
+
+    await expect(
+      createOrderFromCart(
+        cart.id,
+        {
+          addressLine: "23 Unsupported Delivery Street",
+          customerName: "Delivery Buyer",
+          deliveryInstructions: null,
+          deliveryZoneId: randomUUID(),
+          email: null,
+          idempotencyKey: randomUUID(),
+          landmark: null,
+          mobileNumber: "+923005555555",
+          policyConsent: "on",
+          postalCode: null,
+        },
+        database,
+      ),
+    ).rejects.toEqual(new CheckoutError("delivery_unsupported"));
+
+    const [ordersAfter] = await database.select({ value: count() }).from(orders);
+    expect(ordersAfter?.value).toBe(ordersBefore?.value);
+  });
+
+  it("rechecks coupon usage limits inside checkout", async () => {
+    const product = await seedCheckoutProduct(3);
+    const deliveryZoneId = await seedDeliveryZone();
+    await database.insert(coupons).values({
+      code: "LIMIT-ONE",
+      currencyCode: "PKR",
+      discountType: "fixed",
+      discountValue: 1_000,
+      normalizedCode: "LIMIT-ONE",
+      usageLimit: 1,
+    });
+    const firstCart = await createCart(`coupon-a-${randomUUID()}`, database);
+    const secondCart = await createCart(`coupon-b-${randomUUID()}`, database);
+    await Promise.all([
+      addCartItem(firstCart.id, product.variantId, 1, database),
+      addCartItem(secondCart.id, product.variantId, 1, database),
+    ]);
+    await Promise.all([
+      applyCartCoupon(firstCart.id, "limit-one", new Date(), database),
+      applyCartCoupon(secondCart.id, "LIMIT-ONE", new Date(), database),
+    ]);
+    const common: Omit<CheckoutInput, "idempotencyKey" | "mobileNumber"> = {
+      addressLine: "78 Coupon Avenue",
+      customerName: "Coupon Buyer",
+      deliveryInstructions: null,
+      deliveryZoneId,
+      email: null,
+      landmark: null,
+      policyConsent: "on",
+      postalCode: null,
+    };
+    const first = await createOrderFromCart(
+      firstCart.id,
+      { ...common, idempotencyKey: randomUUID(), mobileNumber: "+923002222222" },
+      database,
+    );
+    expect(first.grandTotalMinor).toBe(9_500);
+    await expect(
+      createOrderFromCart(
+        secondCart.id,
+        { ...common, idempotencyKey: randomUUID(), mobileNumber: "+923003333333" },
+        database,
+      ),
+    ).rejects.toMatchObject({ code: "coupon_invalid" });
+  });
+
+  it("releases expired reservations once and expires pending verification", async () => {
+    const product = await seedCheckoutProduct(2);
+    const deliveryZoneId = await seedDeliveryZone();
+    const cart = await createCart(`expiry-${randomUUID()}`, database);
+    await addCartItem(cart.id, product.variantId, 1, database);
+    const order = await createOrderFromCart(
+      cart.id,
+      {
+        addressLine: "56 Expiry Lane",
+        customerName: "Expiry Buyer",
+        deliveryInstructions: null,
+        deliveryZoneId,
+        email: null,
+        idempotencyKey: randomUUID(),
+        landmark: null,
+        mobileNumber: "+923001111111",
+        policyConsent: "on",
+        postalCode: null,
+      },
+      database,
+    );
+    const now = new Date();
+    await database
+      .update(inventoryReservations)
+      .set({ expiresAt: new Date(now.getTime() - 1_000) })
+      .where(eq(inventoryReservations.orderId, order.orderId));
+
+    const overlappingResults = await Promise.all([
+      releaseExpiredReservations(100, now, database),
+      releaseExpiredReservations(100, now, database),
+    ]);
+    expect(overlappingResults.map(({ released }) => released).sort()).toEqual([0, 1]);
+    expect(await releaseExpiredReservations(100, now, database)).toEqual({ released: 0 });
+    const [inventory] = await database
+      .select({ reserved: inventoryItems.reservedQuantity })
+      .from(inventoryItems)
+      .where(eq(inventoryItems.variantId, product.variantId));
+    const [expiredOrder] = await database
+      .select({ verification: orders.verificationState })
+      .from(orders)
+      .where(eq(orders.id, order.orderId));
+    expect(inventory?.reserved).toBe(0);
+    expect(expiredOrder?.verification).toBe("expired");
+  });
+
+  it("merges anonymous cart quantities deterministically", async () => {
+    const product = await seedCheckoutProduct(10);
+    const source = await createCart(`merge-source-${randomUUID()}`, database);
+    const target = await createCart(`merge-target-${randomUUID()}`, database);
+    await addCartItem(source.id, product.variantId, 2, database);
+    await addCartItem(target.id, product.variantId, 3, database);
+
+    await mergeCarts(source.id, target.id, database);
+    const [merged] = await database
+      .select({ quantity: cartItems.quantity })
+      .from(cartItems)
+      .where(and(eq(cartItems.cartId, target.id), eq(cartItems.variantId, product.variantId)));
+    const [sourceCart] = await database
+      .select({ status: carts.status })
+      .from(carts)
+      .where(eq(carts.id, source.id));
+    expect(merged?.quantity).toBe(5);
+    expect(sourceCart?.status).toBe("abandoned");
   });
 });

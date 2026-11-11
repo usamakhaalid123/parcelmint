@@ -5,7 +5,7 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 
 import * as schema from "@/db/schema";
-import { users } from "@/db/schema";
+import { deliveryZones, shippingRates, users } from "@/db/schema";
 import type { StaffPrincipal } from "@/modules/auth";
 import { createCompleteProduct } from "@/modules/catalog";
 
@@ -60,6 +60,22 @@ test.beforeAll(async () => {
     },
     database,
   );
+  const [zone] = await database
+    .insert(deliveryZones)
+    .values({
+      code: `BROWSER_${token.replaceAll("-", "").toUpperCase()}`,
+      name: "Browser test area",
+    })
+    .returning({ id: deliveryZones.id });
+  if (zone === undefined) throw new Error("Browser delivery zone was not created");
+  await database.insert(shippingRates).values({
+    currencyCode: "PKR",
+    deliveryZoneId: zone.id,
+    estimatedDaysMax: 3,
+    estimatedDaysMin: 1,
+    feeMinor: 500,
+    name: "Browser standard delivery",
+  });
   await pool.end();
 });
 
@@ -73,8 +89,33 @@ test("customers can discover an available product and open its details", async (
   await expect(productLink).toHaveAttribute("href", `/products/${productSlug}`);
   const detailResponse = await request.get(`/products/${productSlug}`);
   expect(detailResponse.ok()).toBe(true);
+  await page.waitForLoadState("networkidle");
   await page.goto(`/products/${productSlug}`);
   await expect(page).toHaveURL(new RegExp(`/products/${productSlug}$`));
   await expect(page.getByRole("heading", { level: 1, name: productName })).toBeVisible();
   await expect(page.getByText("Available", { exact: true })).toBeVisible();
+});
+
+test("a guest can place a cash-on-delivery order", async ({ page, request }) => {
+  await request.get(`/products/${productSlug}`);
+  await page.goto(`/products/${productSlug}`);
+  await page.getByRole("button", { name: "Add to cart" }).click();
+  await expect(page).toHaveURL(/\/cart\?notice=added$/);
+  await expect(page.getByRole("heading", { level: 1, name: "Shopping cart" })).toBeVisible();
+  await page.waitForLoadState("networkidle");
+  await page.getByRole("link", { name: "Continue to checkout" }).click();
+  await expect(page).toHaveURL(/\/checkout$/);
+  await expect(page.getByRole("heading", { level: 1, name: "Delivery details" })).toBeVisible();
+
+  await page.getByLabel("Full name").fill("Browser Guest");
+  await page.getByLabel("Mobile number").fill("+92 300 1234567");
+  await page.getByLabel("Complete delivery address").fill("12 Browser Acceptance Street");
+  await page.getByLabel(/I agree to the terms/).check();
+  await page.getByRole("button", { name: "Place cash-on-delivery order" }).click();
+
+  await expect(page).toHaveURL(/\/checkout\/confirmation\/[0-9a-f-]+$/);
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Thank you for your order" }),
+  ).toBeVisible();
+  await expect(page.getByText("Pending verification", { exact: true })).toBeVisible();
 });
