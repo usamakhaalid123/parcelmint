@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 
+import { Alert, Button, Card, FieldLabel, Input } from "@/components/ui";
 import { requestTrackingCodeAction } from "@/modules/orders/server/tracking-actions";
 import { StorefrontMain } from "@/modules/storefront/components/storefront-shell";
 
@@ -20,25 +21,20 @@ export default async function TrackOrderPage({
           Enter the order number and mobile number used at checkout. We will send a short-lived
           verification code when the details match.
         </p>
-        {query.error ? (
-          <p className="rounded-xl bg-red-50 p-4 text-red-800">Please wait and try again.</p>
-        ) : null}
-        <form
-          action={requestTrackingCodeAction}
-          className="mt-8 grid gap-4 rounded-2xl bg-surface p-6"
-        >
-          <label>
-            Order number
-            <input autoComplete="off" maxLength={80} name="orderNumber" required />
-          </label>
-          <label>
-            Mobile number
-            <input autoComplete="tel" maxLength={30} name="mobileNumber" required type="tel" />
-          </label>
-          <button className="button-primary" type="submit">
-            Send verification code
-          </button>
-        </form>
+        {query.error ? <Alert tone="error">Please wait and try again.</Alert> : null}
+        <Card className="mt-8">
+          <form action={requestTrackingCodeAction} className="grid gap-4">
+            <FieldLabel>
+              Order number
+              <Input autoComplete="off" maxLength={80} name="orderNumber" required />
+            </FieldLabel>
+            <FieldLabel>
+              Mobile number
+              <Input autoComplete="tel" maxLength={30} name="mobileNumber" required type="tel" />
+            </FieldLabel>
+            <Button type="submit">Send verification code</Button>
+          </form>
+        </Card>
         <p className="mt-4 text-sm text-[var(--muted)]">
           For privacy, this page gives the same response whether or not an order matches.
         </p>

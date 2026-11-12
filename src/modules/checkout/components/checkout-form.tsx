@@ -4,6 +4,7 @@ import { useActionState, useState } from "react";
 import Link from "next/link";
 import { useFormStatus } from "react-dom";
 
+import { Alert, Button } from "@/components/ui";
 import { formatMoney } from "@/modules/storefront/components/product-card";
 import type { CartView } from "@/modules/checkout/server/cart-repository";
 import type { DeliveryOption } from "@/modules/checkout/server/checkout-service";
@@ -12,9 +13,9 @@ import { submitCheckoutAction, type CheckoutActionState } from "@/modules/checko
 function SubmitOrderButton() {
   const { pending } = useFormStatus();
   return (
-    <button className="button-primary w-full" disabled={pending} type="submit">
+    <Button className="w-full" disabled={pending} type="submit">
       {pending ? "Submitting securely…" : "Place cash-on-delivery order"}
-    </button>
+    </Button>
   );
 }
 
@@ -46,11 +47,7 @@ export function CheckoutForm({
             No account is required. We will use these details only to verify and deliver this order.
           </p>
         </div>
-        {state.status === "error" ? (
-          <div className="rounded-xl border border-red-300 bg-red-50 p-4 text-red-900" role="alert">
-            {state.message}
-          </div>
-        ) : null}
+        {state.status === "error" ? <Alert tone="error">{state.message}</Alert> : null}
         <div className="grid grid-cols-2 gap-5 max-sm:grid-cols-1">
           <label className="grid gap-2 font-bold">
             Full name

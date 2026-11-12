@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
 
+import { Alert, Button, buttonStyles, Input } from "@/components/ui";
 import {
   applyCouponAction,
   clearCouponAction,
@@ -38,21 +39,19 @@ export default async function CartPage({
         <p className="eyebrow">Your selection</p>
         <h1>Shopping cart</h1>
         {query.notice !== undefined && messages[query.notice] !== undefined ? (
-          <p className="rounded-xl border border-emerald-300 bg-emerald-50 p-4" role="status">
-            {messages[query.notice]}
-          </p>
+          <Alert tone="success">{messages[query.notice]}</Alert>
         ) : null}
         {query.error !== undefined ? (
-          <p className="rounded-xl border border-red-300 bg-red-50 p-4 text-red-900" role="alert">
+          <Alert tone="error">
             We could not update the cart. Check availability and try again.
-          </p>
+          </Alert>
         ) : null}
 
         {cart === null || lines.length === 0 ? (
           <section className="rounded-3xl border border-dashed border-[var(--border)] bg-surface p-12 text-center">
             <h2>Your cart is empty</h2>
             <p className="text-[var(--muted)]">Browse the catalog to find something you like.</p>
-            <Link className="button-primary inline-flex" href="/products">
+            <Link className={buttonStyles.primary} href="/products">
               Shop products
             </Link>
           </section>
@@ -98,7 +97,7 @@ export default async function CartPage({
                         <label className="sr-only" htmlFor={`quantity-${line.cartItemId}`}>
                           Quantity for {line.productName}
                         </label>
-                        <input
+                        <Input
                           className="w-20"
                           defaultValue={line.quantity}
                           id={`quantity-${line.cartItemId}`}
@@ -107,15 +106,15 @@ export default async function CartPage({
                           name="quantity"
                           type="number"
                         />
-                        <button className="button-secondary" type="submit">
+                        <Button type="submit" variant="secondary">
                           Update
-                        </button>
+                        </Button>
                       </form>
                       <form action={removeCartItemAction}>
                         <input name="cartItemId" type="hidden" value={line.cartItemId} />
-                        <button className="button-secondary w-full" type="submit">
+                        <Button className="w-full" type="submit" variant="secondary">
                           Remove
-                        </button>
+                        </Button>
                       </form>
                     </div>
                   </article>
@@ -150,10 +149,10 @@ export default async function CartPage({
                     Coupon
                   </label>
                   <div className="flex gap-2">
-                    <input className="min-w-0" id="couponCode" maxLength={40} name="couponCode" />
-                    <button className="button-secondary" type="submit">
+                    <Input className="min-w-0" id="couponCode" maxLength={40} name="couponCode" />
+                    <Button type="submit" variant="secondary">
                       Apply
-                    </button>
+                    </Button>
                   </div>
                 </form>
               ) : (
@@ -161,12 +160,12 @@ export default async function CartPage({
                   <p className="mt-0 text-sm">
                     Coupon: <strong>{cart.couponCode}</strong>
                   </p>
-                  <button className="button-secondary" type="submit">
+                  <Button type="submit" variant="secondary">
                     Remove coupon
-                  </button>
+                  </Button>
                 </form>
               )}
-              <Link className="button-primary flex justify-center" href="/checkout">
+              <Link className={buttonStyles.primary} href="/checkout">
                 Continue to checkout
               </Link>
             </aside>

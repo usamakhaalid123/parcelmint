@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { z } from "zod";
 
+import { Alert, Button, Card, FieldLabel, Input } from "@/components/ui";
 import { verifyTrackingCodeAction } from "@/modules/orders/server/tracking-actions";
 import { StorefrontMain } from "@/modules/storefront/components/storefront-shell";
 
@@ -27,34 +28,29 @@ export default async function VerifyTrackingPage({
           The code expires after ten minutes and allows five attempts.
         </p>
         {query.developmentCode ? (
-          <p className="rounded-xl bg-amber-50 p-4 text-amber-900">
+          <Alert tone="warning">
             Local development code: <strong>{query.developmentCode}</strong>
-          </p>
+          </Alert>
         ) : null}
-        {query.error ? (
-          <p className="rounded-xl bg-red-50 p-4 text-red-800">The code is invalid or expired.</p>
-        ) : null}
-        <form
-          action={verifyTrackingCodeAction}
-          className="mt-8 grid gap-4 rounded-2xl bg-surface p-6"
-        >
-          <input name="challengeId" type="hidden" value={challenge.data} />
-          <label>
-            Verification code
-            <input
-              autoComplete="one-time-code"
-              inputMode="numeric"
-              maxLength={6}
-              minLength={6}
-              name="code"
-              pattern="[0-9]{6}"
-              required
-            />
-          </label>
-          <button className="button-primary" type="submit">
-            Verify and view order
-          </button>
-        </form>
+        {query.error ? <Alert tone="error">The code is invalid or expired.</Alert> : null}
+        <Card className="mt-8">
+          <form action={verifyTrackingCodeAction} className="grid gap-4">
+            <input name="challengeId" type="hidden" value={challenge.data} />
+            <FieldLabel>
+              Verification code
+              <Input
+                autoComplete="one-time-code"
+                inputMode="numeric"
+                maxLength={6}
+                minLength={6}
+                name="code"
+                pattern="[0-9]{6}"
+                required
+              />
+            </FieldLabel>
+            <Button type="submit">Verify and view order</Button>
+          </form>
+        </Card>
       </section>
     </StorefrontMain>
   );

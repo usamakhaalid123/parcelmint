@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 
+import { Alert, Button } from "@/components/ui";
 import { signInCustomer, signUpCustomer } from "@/modules/auth/server/customer-auth";
 import { StorefrontMain } from "@/modules/storefront/components/storefront-shell";
 
@@ -20,12 +21,10 @@ export default async function CustomerSignInPage({
         <p className="eyebrow">Customer account</p>
         <h1>Sign in or create an account</h1>
         {query.error ? (
-          <p className="form-alert">The account request could not be completed.</p>
+          <Alert tone="error">The account request could not be completed.</Alert>
         ) : null}
         {query.notice ? (
-          <p className="rounded-xl bg-green-50 p-4 text-green-900">
-            Check your email to confirm your account.
-          </p>
+          <Alert tone="success">Check your email to confirm your account.</Alert>
         ) : null}
         <div className="grid gap-8 md:grid-cols-2">
           <form action={signInCustomer} className="auth-form rounded-2xl bg-surface p-6">
@@ -44,9 +43,7 @@ export default async function CustomerSignInPage({
                 type="password"
               />
             </label>
-            <button className="button-primary" type="submit">
-              Sign in
-            </button>
+            <Button type="submit">Sign in</Button>
           </form>
           <form action={signUpCustomer} className="auth-form rounded-2xl bg-surface p-6">
             <h2>Create account</h2>
@@ -72,9 +69,9 @@ export default async function CustomerSignInPage({
                 type="password"
               />
             </label>
-            <button className="button-secondary" type="submit">
+            <Button type="submit" variant="secondary">
               Create account
-            </button>
+            </Button>
           </form>
         </div>
       </section>

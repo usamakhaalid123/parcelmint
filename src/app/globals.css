@@ -1,31 +1,78 @@
 @import "tailwindcss";
 
 :root {
+  /* Color system */
   --background: #f7f5ef;
   --surface: #fffdf8;
-  --surface-strong: #ebe7dc;
+  --surface-strong: #eeebe2;
+  --surface-inverse: #16221c;
   --foreground: #17211b;
-  --muted: #5d675f;
-  --primary: #135c3d;
-  --primary-hover: #0e4930;
-  --accent: #e3a72f;
+  --muted: #5c675f;
+  --muted-strong: #3f4a43;
+  --primary: #116149;
+  --primary-hover: #0b4c39;
+  --primary-active: #083d2f;
+  --primary-soft: #e4f3ed;
+  --primary-border: #91c9b5;
+  --accent: #d79a27;
+  --info: #175cd3;
+  --info-surface: #eff8ff;
+  --info-border: #84caff;
+  --success: #176b45;
+  --success-surface: #ecfdf3;
+  --success-border: #86d5ad;
+  --warning: #8a4b08;
+  --warning-surface: #fff8e7;
+  --warning-border: #e9c46a;
   --danger: #8a1c13;
-  --danger-border: #b42318;
+  --danger-border: #e59b95;
   --danger-surface: #fff1f0;
   --border: #d8d4c9;
-  --focus: #1b6ef3;
+  --border-strong: #aaa69c;
+  --focus: #1769d2;
+
+  /* Shape, elevation, layout, and motion */
   --radius-sm: 0.5rem;
   --radius-md: 1rem;
   --radius-lg: 1.5rem;
-  --shadow-card: 0 1.25rem 3rem rgb(23 33 27 / 8%);
+  --ui-radius-card: 1rem;
+  --ui-radius-panel: 1.5rem;
+  --ui-shadow-card: 0 1rem 2.5rem rgb(23 33 27 / 9%);
+  --content-width: 80rem;
 }
 
 @theme inline {
   --color-background: var(--background);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-danger: var(--danger);
+  --color-danger-border: var(--danger-border);
+  --color-danger-surface: var(--danger-surface);
   --color-foreground: var(--foreground);
+  --color-info: var(--info);
+  --color-info-border: var(--info-border);
+  --color-info-surface: var(--info-surface);
+  --color-muted: var(--muted);
+  --color-muted-strong: var(--muted-strong);
   --color-primary: var(--primary);
+  --color-primary-active: var(--primary-active);
+  --color-primary-border: var(--primary-border);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-soft: var(--primary-soft);
+  --color-success: var(--success);
+  --color-success-border: var(--success-border);
+  --color-success-surface: var(--success-surface);
   --color-surface: var(--surface);
-  --font-sans: var(--font-system);
+  --color-surface-inverse: var(--surface-inverse);
+  --color-surface-strong: var(--surface-strong);
+  --color-warning: var(--warning);
+  --color-warning-border: var(--warning-border);
+  --color-warning-surface: var(--warning-surface);
+  --font-display: var(--font-manrope);
+  --font-sans: var(--font-inter);
+  --radius-card: var(--ui-radius-card);
+  --radius-panel: var(--ui-radius-panel);
+  --shadow-card: var(--ui-shadow-card);
 }
 
 * {
@@ -37,14 +84,13 @@ html {
 }
 
 body {
-  --font-system:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   min-height: 100vh;
   margin: 0;
   background: var(--background);
   color: var(--foreground);
-  font-family: var(--font-system);
+  font-family: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
   line-height: 1.6;
+  text-rendering: optimizeLegibility;
 }
 
 a {
@@ -52,13 +98,23 @@ a {
 }
 
 button,
-a {
+a,
+input,
+select,
+textarea {
   -webkit-tap-highlight-color: transparent;
 }
 
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
 :focus-visible {
-  outline: 0.2rem solid var(--focus);
-  outline-offset: 0.2rem;
+  outline: 3px solid var(--focus);
+  outline-offset: 3px;
 }
 
 .skip-link {
@@ -143,19 +199,20 @@ h1,
 h2,
 h3 {
   margin-top: 0;
-  line-height: 1.08;
-  letter-spacing: -0.045em;
+  font-family: var(--font-display);
+  line-height: 1.12;
+  letter-spacing: -0.035em;
 }
 
 h1 {
   max-width: 16ch;
   margin-bottom: 1.5rem;
-  font-size: clamp(2.75rem, 8vw, 6.5rem);
+  font-size: clamp(2.5rem, 6vw, 4.75rem);
 }
 
 h2 {
   max-width: 18ch;
-  font-size: clamp(2rem, 5vw, 3.5rem);
+  font-size: clamp(1.75rem, 4vw, 3rem);
 }
 
 h3 {
@@ -177,7 +234,7 @@ h3 {
   justify-content: center;
   padding: 0.75rem 1.1rem;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: 0.5rem;
   background: var(--primary);
   color: white;
   cursor: pointer;

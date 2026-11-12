@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 
+import { Alert, Button, PageContainer } from "@/components/ui";
 import { requirePermission } from "@/modules/auth/server/require-permission";
 import {
   reconcileCashCollectionAction,
@@ -34,9 +35,9 @@ function OperationForm({
         Operational reason
         <input name="reason" required minLength={3} />
       </label>
-      <button className="button-secondary" type="submit">
+      <Button type="submit" variant="secondary">
         {button}
-      </button>
+      </Button>
     </form>
   );
 }
@@ -49,7 +50,7 @@ export default async function CashOperationsPage({
   await requirePermission("cash.reconcile");
   const [collections, query] = await Promise.all([listCashCollections(), searchParams]);
   return (
-    <main className="mx-auto w-full max-w-7xl px-[clamp(1rem,4vw,3rem)] py-10" id="main-content">
+    <PageContainer>
       <header className="mb-8">
         <p className="eyebrow">Phase 7</p>
         <h1>COD cash operations</h1>
@@ -57,10 +58,8 @@ export default async function CashOperationsPage({
           Record courier collections, remittance batches, reconciliation, and discrepancies.
         </p>
       </header>
-      {query.notice ? <p className="rounded-xl bg-green-50 p-4">Cash record updated.</p> : null}
-      {query.error ? (
-        <p className="form-alert">The cash operation could not be completed.</p>
-      ) : null}
+      {query.notice ? <Alert tone="success">Cash record updated.</Alert> : null}
+      {query.error ? <Alert tone="error">The cash operation could not be completed.</Alert> : null}
       <div className="grid gap-5">
         {collections.map((collection) => (
           <article
@@ -161,6 +160,6 @@ export default async function CashOperationsPage({
           </article>
         ))}
       </div>
-    </main>
+    </PageContainer>
   );
 }

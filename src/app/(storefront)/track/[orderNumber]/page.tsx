@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { cookies } from "next/headers";
 import { notFound } from "next/navigation";
 
+import { Alert, Button } from "@/components/ui";
 import { isCustomerCancellationEligible } from "@/modules/orders/domain/return-policy";
 import {
   cancelTrackedOrderAction,
@@ -40,14 +41,8 @@ export default async function TrackedOrderPage({
       <section className="py-16">
         <p className="eyebrow">Order tracking</p>
         <h1>{detail.order.orderNumber}</h1>
-        {query.notice ? (
-          <p className="rounded-xl bg-green-50 p-4 text-green-900">Your request was recorded.</p>
-        ) : null}
-        {query.error ? (
-          <p className="rounded-xl bg-red-50 p-4 text-red-800">
-            The request could not be completed.
-          </p>
-        ) : null}
+        {query.notice ? <Alert tone="success">Your request was recorded.</Alert> : null}
+        {query.error ? <Alert tone="error">The request could not be completed.</Alert> : null}
         <div className="grid gap-4 md:grid-cols-3">
           <div className="rounded-xl bg-surface p-4">
             <strong>Verification</strong>
@@ -88,9 +83,9 @@ export default async function TrackedOrderPage({
                 Cancellation reason
                 <input minLength={3} name="reason" required />
               </label>
-              <button className="button-secondary" type="submit">
+              <Button type="submit" variant="secondary">
                 Cancel eligible order
-              </button>
+              </Button>
             </form>
           </section>
         ) : null}
@@ -121,9 +116,9 @@ export default async function TrackedOrderPage({
                   Additional notes
                   <textarea maxLength={1000} name="customerNotes" rows={2} />
                 </label>
-                <button className="button-secondary" type="submit">
+                <Button type="submit" variant="secondary">
                   Request return
-                </button>
+                </Button>
               </form>
             ))}
           </section>

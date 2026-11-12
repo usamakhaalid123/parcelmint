@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { z } from "zod";
 
+import { buttonStyles } from "@/components/ui";
 import { getOrderConfirmation } from "@/modules/checkout/server/checkout-service";
 import { formatMoney } from "@/modules/storefront/components/product-card";
 import { StorefrontMain } from "@/modules/storefront/components/storefront-shell";
@@ -53,10 +54,10 @@ export default async function ConfirmationPage({
           Save the order number for secure phone-verified tracking.
         </p>
         <div className="flex justify-center gap-3">
-          <Link className="button-primary inline-flex" href="/track">
+          <Link className={buttonStyles.primary} href="/track">
             Track order
           </Link>
-          <Link className="button-secondary inline-flex" href="/products">
+          <Link className={buttonStyles.secondary} href="/products">
             Continue shopping
           </Link>
         </div>

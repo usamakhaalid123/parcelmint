@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 
+import { buttonStyles, PageContainer } from "@/components/ui";
 import { requirePermission } from "@/modules/auth/server/require-permission";
 import { getOperationalDashboard } from "@/modules/reporting/server/reporting-service";
 import { formatMoney } from "@/modules/storefront/components/product-card";
@@ -10,7 +11,7 @@ export default async function OperationalReportsPage() {
   await requirePermission("reports.read");
   const dashboard = await getOperationalDashboard();
   return (
-    <main className="mx-auto w-full max-w-7xl px-[clamp(1rem,4vw,3rem)] py-10" id="main-content">
+    <PageContainer>
       <header className="mb-8 flex flex-wrap items-end justify-between gap-4">
         <div>
           <p className="eyebrow">Phase 7</p>
@@ -20,7 +21,7 @@ export default async function OperationalReportsPage() {
             are intentionally separate operational measures.
           </p>
         </div>
-        <a className="button-secondary" href="/api/v1/admin/reports/cod.csv">
+        <a className={buttonStyles.secondary} href="/api/v1/admin/reports/cod.csv">
           Download traceable CSV
         </a>
       </header>
@@ -72,6 +73,6 @@ export default async function OperationalReportsPage() {
           <p>No operational order data is available yet.</p>
         ) : null}
       </div>
-    </main>
+    </PageContainer>
   );
 }

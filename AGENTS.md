@@ -50,6 +50,10 @@ If a requested change crosses several areas, read only those sections. Read the 
 6. Continue through implementation and verification while safe in-scope work remains.
 7. Report changed files, observed verification results, assumptions, and remaining limitations.
 
+## UI implementation skill
+
+Before creating or changing any user-visible interface, read and follow [`skills/parcelmint-ui/SKILL.md`](skills/parcelmint-ui/SKILL.md). This applies to storefront, cart, checkout, account, tracking, administration, shared components, styling, responsive behavior, and visual states. Backend-only work with no rendered interface impact does not require this skill.
+
 Use a safe, reversible default when an ambiguity does not change product meaning. Ask for a decision when it materially affects legal or tax rules, money, inventory integrity, destructive data changes, production credentials, or customer communications.
 
 ## Verification

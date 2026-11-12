@@ -1,6 +1,8 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
 
+import { layoutStyles } from "@/components/ui";
+
 export function StorefrontHeader() {
   return (
     <header className="border-b border-[var(--border)] bg-[rgb(247_245_239_/_95%)] backdrop-blur">
@@ -76,7 +78,7 @@ export function StorefrontFooter() {
 
 export function StorefrontMain({ children }: { children: ReactNode }) {
   return (
-    <main className="mx-auto w-full max-w-7xl px-[clamp(1rem,4vw,3rem)]" id="main-content">
+    <main className={layoutStyles.storefront} id="main-content">
       {children}
     </main>
   );

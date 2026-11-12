@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import type { Metadata } from "next";
 import Link from "next/link";
 
+import { buttonStyles } from "@/components/ui";
 import { CheckoutForm } from "@/modules/checkout/components/checkout-form";
 import { getCurrentCart } from "@/modules/checkout/server/cart-session";
 import { listDeliveryOptions } from "@/modules/checkout/server/checkout-service";
@@ -18,7 +19,7 @@ export default async function CheckoutPage() {
       <StorefrontMain>
         <section className="py-20 text-center">
           <h1>Your cart is empty</h1>
-          <Link className="button-primary inline-flex" href="/products">
+          <Link className={buttonStyles.primary} href="/products">
             Shop products
           </Link>
         </section>

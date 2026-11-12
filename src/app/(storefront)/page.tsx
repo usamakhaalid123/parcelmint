@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
+import { buttonStyles, cardStyles, fieldStyles } from "@/components/ui";
 import { ProductCard } from "@/modules/storefront/components/product-card";
 import { StorefrontMain } from "@/modules/storefront/components/storefront-shell";
 import {
@@ -42,13 +43,13 @@ export default async function HomePage() {
               Search products
             </label>
             <input
-              className="min-h-12 flex-1 rounded-lg border border-[var(--border)] bg-surface px-4"
+              className={`${fieldStyles.control} min-h-12 flex-1`}
               id="home-search"
               name="query"
               placeholder="Search by product or SKU"
               type="search"
             />
-            <button className="primary-action" type="submit">
+            <button className={buttonStyles.primary} type="submit">
               Search products
             </button>
           </form>
@@ -108,7 +109,7 @@ export default async function HomePage() {
           </Link>
         </div>
         {featured.items.length === 0 ? (
-          <div className="mt-8 rounded-3xl border border-dashed border-[var(--border)] bg-surface p-10 text-center">
+          <div className={`${cardStyles.default} mt-8 border-dashed text-center`}>
             <h3>Products are being prepared.</h3>
             <p className="text-[var(--muted)]">Please check back soon.</p>
           </div>

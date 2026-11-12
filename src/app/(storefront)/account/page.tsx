@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 
+import { Alert, Button } from "@/components/ui";
 import { signOutCustomer } from "@/modules/auth/server/customer-auth";
 import { getCurrentPrincipal } from "@/modules/auth/server/current-principal";
 import {
@@ -33,15 +34,13 @@ export default async function CustomerAccountPage({
             <h1>{account.profile?.displayName ?? "My account"}</h1>
           </div>
           <form action={signOutCustomer}>
-            <button className="button-secondary" type="submit">
+            <Button type="submit" variant="secondary">
               Sign out
-            </button>
+            </Button>
           </form>
         </div>
-        {query.notice ? (
-          <p className="rounded-xl bg-green-50 p-4 text-green-900">Account updated.</p>
-        ) : null}
-        {query.error ? <p className="form-alert">The update could not be completed.</p> : null}
+        {query.notice ? <Alert tone="success">Account updated.</Alert> : null}
+        {query.error ? <Alert tone="error">The update could not be completed.</Alert> : null}
         <section className="mt-10">
           <h2>Order history</h2>
           {account.orders.length === 0 ? (
@@ -60,9 +59,9 @@ export default async function CustomerAccountPage({
                   </span>
                   <form action={openCustomerOrderAction}>
                     <input name="orderNumber" type="hidden" value={order.orderNumber} />
-                    <button className="button-secondary" type="submit">
+                    <Button type="submit" variant="secondary">
                       View and manage
-                    </button>
+                    </Button>
                   </form>
                 </li>
               ))}
@@ -87,9 +86,9 @@ export default async function CustomerAccountPage({
                 </p>
                 <form action={deleteCustomerAddressAction}>
                   <input name="addressId" type="hidden" value={address.id} />
-                  <button className="button-secondary" type="submit">
+                  <Button type="submit" variant="secondary">
                     Remove
-                  </button>
+                  </Button>
                 </form>
               </article>
             ))}
@@ -130,9 +129,9 @@ export default async function CustomerAccountPage({
             <label className="md:col-span-2">
               <input name="isDefault" type="checkbox" /> Make default
             </label>
-            <button className="button-primary md:col-span-2" type="submit">
+            <Button className="md:col-span-2" type="submit">
               Save address
-            </button>
+            </Button>
           </form>
         </section>
       </section>

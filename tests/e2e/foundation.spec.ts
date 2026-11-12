@@ -12,6 +12,30 @@ test("renders the accessible foundation page", async ({ page }) => {
   await expect(page.getByRole("link", { name: "Skip to main content" })).toBeAttached();
 });
 
+test("applies the responsive UI foundation and visible keyboard focus", async ({ page }) => {
+  await page.goto("/");
+
+  const search = page.getByRole("searchbox", { name: "Search products" });
+  await search.focus();
+  const focus = await search.evaluate((element) => {
+    const styles = getComputedStyle(element);
+    return { outlineStyle: styles.outlineStyle, outlineWidth: styles.outlineWidth };
+  });
+  expect(focus.outlineStyle).not.toBe("none");
+  expect(Number.parseFloat(focus.outlineWidth)).toBeGreaterThanOrEqual(2);
+
+  const searchButton = page.getByRole("button", { name: "Search products" });
+  expect(
+    await searchButton.evaluate((element) => element.getBoundingClientRect().height),
+  ).toBeGreaterThanOrEqual(44);
+
+  const viewport = await page.evaluate(() => ({
+    clientWidth: document.documentElement.clientWidth,
+    scrollWidth: document.documentElement.scrollWidth,
+  }));
+  expect(viewport.scrollWidth).toBeLessThanOrEqual(viewport.clientWidth);
+});
+
 test("renders the public catalog empty state accessibly", async ({ page }) => {
   await page.goto("/products?query=guaranteed-no-match-browser-test");
 

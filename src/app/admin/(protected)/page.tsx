@@ -1,11 +1,10 @@
 import Link from "next/link";
 
+import { cardStyles, cx, PageContainer } from "@/components/ui";
+
 export default function AdminDashboardPage() {
   return (
-    <main
-      className="mx-auto min-h-[calc(100vh-4.5rem)] w-full max-w-7xl px-[clamp(1rem,4vw,3rem)] py-[clamp(2rem,6vw,5rem)]"
-      id="main-content"
-    >
+    <PageContainer>
       <header className="mb-10">
         <div>
           <p className="mb-4 text-xs font-extrabold tracking-[0.11em] text-primary uppercase">
@@ -23,10 +22,7 @@ export default function AdminDashboardPage() {
         className="grid grid-cols-2 gap-4 max-md:grid-cols-1"
         aria-label="Available administration modules"
       >
-        <Link
-          className="min-h-56 rounded-3xl border border-[var(--border)] bg-surface p-[clamp(1.25rem,3vw,2rem)] no-underline shadow-[var(--shadow-card)] transition hover:-translate-y-0.5 hover:border-primary motion-reduce:transform-none"
-          href="/admin/catalog"
-        >
+        <Link className={cx(cardStyles.interactive, "min-h-56 no-underline")} href="/admin/catalog">
           <span className="text-xs font-extrabold tracking-[0.08em] text-primary uppercase">
             Phase 2
           </span>
@@ -37,10 +33,7 @@ export default function AdminDashboardPage() {
             Create products and variants, control lifecycle state, and adjust stock.
           </p>
         </Link>
-        <Link
-          className="min-h-56 rounded-3xl border border-[var(--border)] bg-surface p-[clamp(1.25rem,3vw,2rem)] no-underline shadow-[var(--shadow-card)] transition hover:-translate-y-0.5 hover:border-primary motion-reduce:transform-none"
-          href="/admin/reports"
-        >
+        <Link className={cx(cardStyles.interactive, "min-h-56 no-underline")} href="/admin/reports">
           <span className="text-xs font-extrabold tracking-[0.08em] text-primary uppercase">
             Phase 7
           </span>
@@ -51,10 +44,7 @@ export default function AdminDashboardPage() {
             Trace collections and remittances, resolve discrepancies, and export operational values.
           </p>
         </Link>
-        <Link
-          className="min-h-56 rounded-3xl border border-[var(--border)] bg-surface p-[clamp(1.25rem,3vw,2rem)] no-underline shadow-[var(--shadow-card)] transition hover:-translate-y-0.5 hover:border-primary motion-reduce:transform-none"
-          href="/admin/orders"
-        >
+        <Link className={cx(cardStyles.interactive, "min-h-56 no-underline")} href="/admin/orders">
           <span className="text-xs font-extrabold tracking-[0.08em] text-primary uppercase">
             Phase 5
           </span>
@@ -64,6 +54,6 @@ export default function AdminDashboardPage() {
           </p>
         </Link>
       </section>
-    </main>
+    </PageContainer>
   );
 }
