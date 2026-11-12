@@ -3,6 +3,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
+import { Badge, Card } from "@/components/ui";
 import { getServerEnvironment } from "@/config/env";
 import { AddToCartForm } from "@/modules/checkout/components/add-to-cart-form";
 import {
@@ -10,6 +11,7 @@ import {
   minorUnitsToMajor,
   ProductCard,
 } from "@/modules/storefront/components/product-card";
+import { StorefrontIcon } from "@/modules/storefront/components/storefront-icon";
 import { StorefrontMain } from "@/modules/storefront/components/storefront-shell";
 import {
   getCachedStorefrontProduct,
@@ -124,17 +126,34 @@ export default async function ProductPage({
         }}
         type="application/ld+json"
       />
-      <nav aria-label="Breadcrumb" className="py-6 text-sm text-[var(--muted)]">
-        <Link href="/">Home</Link> <span aria-hidden="true">/</span>{" "}
-        <Link href="/products">Products</Link> <span aria-hidden="true">/</span>{" "}
-        <span aria-current="page">{product.name}</span>
+      <nav
+        aria-label="Breadcrumb"
+        className="flex flex-wrap items-center gap-2 py-6 text-sm text-muted"
+      >
+        <Link className="font-bold text-muted-strong no-underline hover:text-primary" href="/">
+          Home
+        </Link>
+        <StorefrontIcon className="size-3" name="arrow" />
+        <Link
+          className="font-bold text-muted-strong no-underline hover:text-primary"
+          href="/products"
+        >
+          Products
+        </Link>
+        <StorefrontIcon className="size-3" name="arrow" />
+        <span aria-current="page" className="truncate">
+          {product.name}
+        </span>
       </nav>
-      <div className="grid grid-cols-[1.1fr_0.9fr] gap-12 max-lg:grid-cols-1">
+      <div className="grid grid-cols-[1.05fr_0.95fr] items-start gap-10 pb-8 lg:gap-16 max-lg:grid-cols-1">
         <section aria-label="Product images">
-          <div className="relative aspect-square overflow-hidden rounded-3xl border border-[var(--border)] bg-[var(--surface-strong)]">
+          <div className="relative aspect-square overflow-hidden rounded-[2rem] border border-border bg-surface-strong shadow-card">
             {selectedImage === undefined ? (
-              <div className="grid h-full place-items-center font-bold text-[var(--muted)]">
-                Product image coming soon
+              <div className="grid h-full place-items-center text-center font-bold text-muted">
+                <div>
+                  <StorefrontIcon className="mx-auto mb-4 size-16" name="package" />
+                  Product image coming soon
+                </div>
               </div>
             ) : (
               <Image
@@ -148,11 +167,12 @@ export default async function ProductPage({
             )}
           </div>
           {product.images.length > 1 ? (
-            <div className="mt-3 grid grid-cols-5 gap-2 max-sm:grid-cols-4">
+            <div className="mt-3 grid grid-cols-5 gap-3 max-sm:grid-cols-4">
               {product.images.map((image) => (
                 <Link
+                  aria-current={image.id === selectedImage?.id ? "true" : undefined}
                   aria-label={`View ${image.altText}`}
-                  className="relative aspect-square overflow-hidden rounded-xl border border-[var(--border)]"
+                  className={`relative aspect-square overflow-hidden rounded-xl border-2 bg-surface-strong transition ${image.id === selectedImage?.id ? "border-primary ring-2 ring-primary-soft" : "border-transparent hover:border-border-strong"}`}
                   href={`/products/${product.slug}?image=${image.id}${selectedVariant === undefined ? "" : `&variant=${selectedVariant.id}`}`}
                   key={image.id}
                 >
@@ -169,21 +189,32 @@ export default async function ProductPage({
           ) : null}
         </section>
 
-        <section>
-          <p className="eyebrow">{product.brandName ?? "ParcelMint selection"}</p>
-          <h1 className="text-[clamp(2.5rem,6vw,5rem)]!">{product.name}</h1>
-          <p className="text-2xl font-black">{formatMoney(priceMinor, product.currencyCode)}</p>
-          <p className="text-[var(--muted)]">
+        <section className="lg:sticky lg:top-24">
+          <div className="mb-4 flex flex-wrap items-center gap-3">
+            <p className="text-xs font-extrabold tracking-[0.14em] text-primary uppercase">
+              {product.brandName ?? "ParcelMint selection"}
+            </p>
+            <Badge tone={available ? "success" : "neutral"}>
+              {available ? "In stock" : "Out of stock"}
+            </Badge>
+          </div>
+          <h1 className="break-words text-[clamp(2.25rem,4vw,4rem)] leading-[1.02] tracking-[-0.045em]">
+            {product.name}
+          </h1>
+          <p className="mt-5 font-display text-3xl font-extrabold text-foreground">
+            {formatMoney(priceMinor, product.currencyCode)}
+          </p>
+          <p className="mt-5 text-base leading-7 text-muted sm:text-lg">
             {product.description || "Product details are available from the selected variant."}
           </p>
           {product.variants.length > 0 ? (
-            <div className="mt-8">
-              <h2 className="text-xl">Choose a variant</h2>
-              <div className="flex flex-wrap gap-2">
+            <fieldset className="mt-8 border-0 p-0">
+              <legend className="mb-3 font-display text-lg font-bold">Choose a variant</legend>
+              <div className="flex flex-wrap gap-3">
                 {product.variants.map((variant) => (
                   <Link
                     aria-current={variant.id === selectedVariant?.id ? "true" : undefined}
-                    className={`rounded-xl border px-4 py-3 font-bold no-underline ${variant.id === selectedVariant?.id ? "border-primary bg-primary text-white" : "border-[var(--border)] bg-surface"}`}
+                    className={`min-h-11 rounded-lg border px-4 py-3 text-sm font-bold no-underline transition ${variant.id === selectedVariant?.id ? "border-primary bg-primary text-white shadow-sm" : "border-border bg-surface text-foreground hover:border-primary hover:text-primary"}`}
                     href={`/products/${product.slug}?variant=${variant.id}${selectedImage === undefined ? "" : `&image=${selectedImage.id}`}`}
                     key={variant.id}
                   >
@@ -191,37 +222,79 @@ export default async function ProductPage({
                   </Link>
                 ))}
               </div>
-            </div>
+            </fieldset>
           ) : null}
-          <dl className="my-8 grid grid-cols-2 gap-3">
-            <div className="rounded-xl bg-surface p-4">
-              <dt className="text-xs font-bold uppercase text-[var(--muted)]">Availability</dt>
-              <dd className="mt-1 font-bold">{available ? "Available" : "Out of stock"}</dd>
-            </div>
-            <div className="rounded-xl bg-surface p-4">
-              <dt className="text-xs font-bold uppercase text-[var(--muted)]">SKU</dt>
-              <dd className="mt-1 font-mono text-sm">{selectedVariant?.sku ?? "Unavailable"}</dd>
-            </div>
-          </dl>
-          <AddToCartForm available={available} variantId={selectedVariant?.id ?? ""} />
-          <div className="rounded-2xl border border-[var(--border)] bg-surface p-5">
-            <h2 className="text-xl">Delivery and returns</h2>
-            <p className="text-sm text-[var(--muted)]">
-              Delivery availability and the final charge are confirmed before order submission.
-              Review the <Link href="/content/shipping">shipping information</Link> and{" "}
-              <Link href="/content/returns">return terms</Link> before purchasing.
+          <div className="my-8 rounded-card border border-border bg-surface p-5 shadow-card">
+            <AddToCartForm available={available} variantId={selectedVariant?.id ?? ""} />
+            <p className="mt-4 flex items-start gap-2 border-t border-border pt-4 text-sm leading-6 text-muted">
+              <StorefrontIcon className="mt-0.5 size-5 shrink-0 text-primary" name="cash" />
+              No advance payment. The final total and delivery charge are shown before you submit
+              your cash-on-delivery order.
             </p>
           </div>
+          <dl className="grid grid-cols-2 gap-3">
+            <div className="rounded-xl border border-border bg-surface p-4">
+              <dt className="text-xs font-bold tracking-wider text-muted uppercase">
+                Availability
+              </dt>
+              <dd className="mt-1 font-bold">{available ? "Ready to order" : "Out of stock"}</dd>
+            </div>
+            <div className="rounded-xl border border-border bg-surface p-4">
+              <dt className="text-xs font-bold tracking-wider text-muted uppercase">SKU</dt>
+              <dd className="mt-1 truncate font-mono text-sm">
+                {selectedVariant?.sku ?? "Unavailable"}
+              </dd>
+            </div>
+          </dl>
         </section>
       </div>
 
+      <section aria-labelledby="delivery-title" className="mt-12 grid gap-4 md:grid-cols-3">
+        <Card className="shadow-none">
+          <StorefrontIcon className="mb-4 size-7 text-primary" name="truck" />
+          <h2 className="text-lg" id="delivery-title">
+            Delivery made clear
+          </h2>
+          <p className="mt-2 text-sm leading-6 text-muted">
+            Availability and the final delivery charge are confirmed during checkout.
+          </p>
+          <Link
+            className="mt-3 inline-block text-sm font-bold text-primary"
+            href="/content/shipping"
+          >
+            Shipping information
+          </Link>
+        </Card>
+        <Card className="shadow-none">
+          <StorefrontIcon className="mb-4 size-7 text-primary" name="shield" />
+          <h2 className="text-lg">Return guidance</h2>
+          <p className="mt-2 text-sm leading-6 text-muted">
+            Check eligibility and return conditions before placing your order.
+          </p>
+          <Link
+            className="mt-3 inline-block text-sm font-bold text-primary"
+            href="/content/returns"
+          >
+            Review return terms
+          </Link>
+        </Card>
+        <Card className="shadow-none">
+          <StorefrontIcon className="mb-4 size-7 text-primary" name="cash" />
+          <h2 className="text-lg">Pay on arrival</h2>
+          <p className="mt-2 text-sm leading-6 text-muted">
+            Guest checkout is supported and no online payment is required.
+          </p>
+        </Card>
+      </section>
+
       {related === null ? null : (
-        <section
-          aria-labelledby="related-title"
-          className="mt-20 border-t border-[var(--border)] py-16"
-        >
-          <p className="eyebrow">You may also like</p>
-          <h2 id="related-title">Related products</h2>
+        <section aria-labelledby="related-title" className="mt-20 border-t border-border py-16">
+          <p className="mb-3 text-xs font-extrabold tracking-[0.14em] text-primary uppercase">
+            You may also like
+          </p>
+          <h2 className="text-3xl sm:text-4xl" id="related-title">
+            More to explore
+          </h2>
           <div className="mt-8 grid grid-cols-3 gap-5 max-lg:grid-cols-2 max-sm:grid-cols-1">
             {related.items
               .filter(({ slug: relatedSlug }) => relatedSlug !== product.slug)

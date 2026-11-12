@@ -4,7 +4,7 @@ import { useActionState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useFormStatus } from "react-dom";
 
-import { Button, Input } from "@/components/ui";
+import { Alert, Button, Input } from "@/components/ui";
 import { addToCartAction, type AddToCartActionState } from "@/modules/checkout/server/actions";
 
 function AddButton({ available }: { available: boolean }) {
@@ -26,17 +26,17 @@ export function AddToCartForm({ available, variantId }: { available: boolean; va
   }, [router, state]);
 
   return (
-    <form action={action} className="mb-8 flex items-end gap-3">
+    <form action={action} className="grid grid-cols-[6rem_1fr] items-end gap-3">
       <input name="variantId" type="hidden" value={variantId} />
-      <label className="grid gap-2 font-bold">
+      <label className="grid gap-2 text-sm font-bold">
         Quantity
-        <Input className="w-20" defaultValue={1} max={99} min={1} name="quantity" type="number" />
+        <Input defaultValue={1} max={99} min={1} name="quantity" type="number" />
       </label>
       <AddButton available={available} />
       {state.status === "error" ? (
-        <span className="text-sm font-bold text-red-700" role="alert">
+        <Alert className="col-span-full" role="alert" tone="error">
           This item could not be added. Check availability and try again.
-        </span>
+        </Alert>
       ) : null}
     </form>
   );

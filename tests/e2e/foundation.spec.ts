@@ -6,7 +6,7 @@ test("renders the accessible foundation page", async ({ page }) => {
   await expect(
     page.getByRole("heading", {
       level: 1,
-      name: "Find what you need. Pay when it arrives.",
+      name: "Shop with confidence. Pay at your door.",
     }),
   ).toBeVisible();
   await expect(page.getByRole("link", { name: "Skip to main content" })).toBeAttached();
@@ -40,10 +40,42 @@ test("renders the public catalog empty state accessibly", async ({ page }) => {
   await page.goto("/products?query=guaranteed-no-match-browser-test");
 
   await expect(
-    page.getByRole("heading", { level: 1, name: "Find your next essential." }),
+    page.getByRole("heading", { level: 1, name: "Products for everyday moments." }),
   ).toBeVisible();
   await expect(page.getByRole("heading", { level: 2, name: "No products match." })).toBeVisible();
   await expect(page.getByRole("searchbox", { name: "Search" })).toBeVisible();
+});
+
+test("keeps the primary storefront journey responsive across supported widths", async ({
+  page,
+}) => {
+  for (const width of [390, 768, 1280]) {
+    await page.setViewportSize({ height: 900, width });
+    await page.goto("/");
+
+    const viewport = await page.evaluate(() => ({
+      clientWidth: document.documentElement.clientWidth,
+      scrollWidth: document.documentElement.scrollWidth,
+    }));
+    expect(viewport.scrollWidth).toBeLessThanOrEqual(viewport.clientWidth);
+    await expect(page.getByRole("searchbox", { name: "Search products" })).toBeVisible();
+
+    if (width < 768) {
+      await page.locator("header details > summary").click();
+      await expect(page.getByRole("navigation", { name: "Mobile storefront" })).toBeVisible();
+    } else {
+      await expect(page.getByRole("navigation", { name: "Storefront" })).toBeVisible();
+    }
+  }
+});
+
+test("exposes catalog filters without client-side JavaScript", async ({ page }) => {
+  await page.setViewportSize({ height: 900, width: 390 });
+  await page.goto("/products?query=guaranteed-no-match-browser-test");
+
+  await expect(page.getByText("Filters and sort", { exact: true })).toBeVisible();
+  await expect(page.getByRole("searchbox", { name: "Search" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Reset filters" })).toBeVisible();
 });
 
 test("exposes a non-cacheable health endpoint", async ({ request }) => {

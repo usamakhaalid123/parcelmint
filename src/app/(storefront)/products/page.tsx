@@ -2,7 +2,9 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { z } from "zod";
 
+import { Alert, buttonStyles, cardStyles, fieldStyles } from "@/components/ui";
 import { ProductCard } from "@/modules/storefront/components/product-card";
+import { StorefrontIcon } from "@/modules/storefront/components/storefront-icon";
 import { StorefrontMain } from "@/modules/storefront/components/storefront-shell";
 import { parseStorefrontCatalogQuery } from "@/modules/storefront/schemas/catalog-query";
 import {
@@ -53,13 +55,15 @@ export default async function ProductsPage({
     if (!(error instanceof z.ZodError)) throw error;
     return (
       <StorefrontMain>
-        <section className="py-20">
-          <p className="eyebrow">Catalog</p>
-          <h1>Review your filters.</h1>
-          <p role="alert" className="max-w-xl text-[var(--danger)]">
-            One or more search filters are invalid.
+        <section className="mx-auto max-w-2xl py-20 text-center">
+          <p className="mb-3 text-xs font-extrabold tracking-[0.14em] text-primary uppercase">
+            Catalog
           </p>
-          <Link className="primary-action" href="/products">
+          <h1 className="text-4xl">Review your filters.</h1>
+          <Alert className="my-6 text-left" role="alert" tone="error">
+            One or more search filters are invalid.
+          </Alert>
+          <Link className={buttonStyles.primary} href="/products">
             Clear filters
           </Link>
         </section>
@@ -74,122 +78,148 @@ export default async function ProductsPage({
 
   return (
     <StorefrontMain>
-      <header className="py-14">
-        <p className="eyebrow">Catalog</p>
-        <h1 className="max-w-3xl!">Find your next essential.</h1>
-        <p className="text-[var(--muted)]">
-          {catalog.total} {catalog.total === 1 ? "product" : "products"}
+      <header className="border-b border-border py-10 sm:py-14">
+        <p className="mb-3 text-xs font-extrabold tracking-[0.14em] text-primary uppercase">
+          Shop ParcelMint
         </p>
+        <div className="flex items-end justify-between gap-6 max-sm:block">
+          <div>
+            <h1 className="max-w-3xl text-4xl sm:text-5xl">Products for everyday moments.</h1>
+            <p className="mt-3 text-muted">
+              Browse clear prices, current availability, and cash-on-delivery options.
+            </p>
+          </div>
+          <p className="shrink-0 font-bold text-muted-strong max-sm:mt-4" aria-live="polite">
+            {catalog.total} {catalog.total === 1 ? "product" : "products"}
+          </p>
+        </div>
       </header>
-      <div className="grid grid-cols-[17rem_1fr] gap-8 max-lg:grid-cols-1">
-        <aside aria-label="Product filters">
-          <form
-            action="/products"
-            className="sticky top-5 grid gap-4 rounded-2xl border border-[var(--border)] bg-surface p-5 max-lg:static"
-          >
-            <label className="grid gap-1 font-bold">
-              Search
-              <input
-                className="min-h-11 rounded-lg border border-[var(--border)] bg-background px-3"
-                defaultValue={query.query}
-                name="query"
-                type="search"
-              />
-            </label>
-            <label className="grid gap-1 font-bold">
-              Category
-              <select
-                className="min-h-11 rounded-lg border border-[var(--border)] bg-background px-3"
-                defaultValue={query.category ?? ""}
-                name="category"
-              >
-                <option value="">All categories</option>
-                {facets.categories.map((item) => (
-                  <option key={item.slug} value={item.slug}>
-                    {item.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="grid gap-1 font-bold">
-              Brand
-              <select
-                className="min-h-11 rounded-lg border border-[var(--border)] bg-background px-3"
-                defaultValue={query.brand ?? ""}
-                name="brand"
-              >
-                <option value="">All brands</option>
-                {facets.brands.map((item) => (
-                  <option key={item.slug} value={item.slug}>
-                    {item.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="grid gap-1 font-bold">
-              Availability
-              <select
-                className="min-h-11 rounded-lg border border-[var(--border)] bg-background px-3"
-                defaultValue={query.availability ?? ""}
-                name="availability"
-              >
-                <option value="">Any availability</option>
-                <option value="in_stock">Available</option>
-                <option value="out_of_stock">Out of stock</option>
-              </select>
-            </label>
-            <div className="grid grid-cols-2 gap-2">
-              <label className="grid gap-1 text-sm font-bold">
-                Min price
+      <div className="grid grid-cols-[17rem_1fr] gap-8 py-10 max-lg:grid-cols-1">
+        <aside aria-label="Product filters" className="self-start">
+          <details className="group" open>
+            <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between rounded-lg border border-border bg-surface px-4 font-bold shadow-sm lg:hidden [&::-webkit-details-marker]:hidden">
+              <span className="inline-flex items-center gap-2">
+                <StorefrontIcon className="size-5" name="search" /> Filters and sort
+              </span>
+              <span aria-hidden="true" className="text-primary group-open:rotate-90">
+                <StorefrontIcon className="size-4" name="arrow" />
+              </span>
+            </summary>
+            <form
+              action="/products"
+              className="mt-3 grid gap-5 rounded-card border border-border bg-surface p-5 shadow-card lg:sticky lg:top-24 lg:mt-0"
+            >
+              <div className="hidden items-center justify-between lg:flex">
+                <h2 className="text-lg">Filter products</h2>
+                <StorefrontIcon className="size-5 text-primary" name="search" />
+              </div>
+              <label className={fieldStyles.label}>
+                Search
                 <input
-                  className="min-h-11 min-w-0 rounded-lg border border-[var(--border)] bg-background px-3"
-                  defaultValue={query.minPrice}
-                  min={0}
-                  name="minPrice"
-                  step={1}
-                  type="number"
+                  className={fieldStyles.control}
+                  defaultValue={query.query}
+                  name="query"
+                  placeholder="Name or SKU"
+                  type="search"
                 />
               </label>
-              <label className="grid gap-1 text-sm font-bold">
-                Max price
-                <input
-                  className="min-h-11 min-w-0 rounded-lg border border-[var(--border)] bg-background px-3"
-                  defaultValue={query.maxPrice}
-                  min={0}
-                  name="maxPrice"
-                  step={1}
-                  type="number"
-                />
+              <label className={fieldStyles.label}>
+                Category
+                <select
+                  className={fieldStyles.control}
+                  defaultValue={query.category ?? ""}
+                  name="category"
+                >
+                  <option value="">All categories</option>
+                  {facets.categories.map((item) => (
+                    <option key={item.slug} value={item.slug}>
+                      {item.name}
+                    </option>
+                  ))}
+                </select>
               </label>
-            </div>
-            <label className="grid gap-1 font-bold">
-              Sort
-              <select
-                className="min-h-11 rounded-lg border border-[var(--border)] bg-background px-3"
-                defaultValue={query.sort}
-                name="sort"
-              >
-                <option value="newest">Newest</option>
-                <option value="name">Name</option>
-                <option value="price_asc">Price: low to high</option>
-                <option value="price_desc">Price: high to low</option>
-              </select>
-            </label>
-            <button className="primary-action" type="submit">
-              Apply filters
-            </button>
-            <Link className="text-center font-bold text-primary" href="/products">
-              Clear all
-            </Link>
-          </form>
+              <label className={fieldStyles.label}>
+                Brand
+                <select
+                  className={fieldStyles.control}
+                  defaultValue={query.brand ?? ""}
+                  name="brand"
+                >
+                  <option value="">All brands</option>
+                  {facets.brands.map((item) => (
+                    <option key={item.slug} value={item.slug}>
+                      {item.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className={fieldStyles.label}>
+                Availability
+                <select
+                  className={fieldStyles.control}
+                  defaultValue={query.availability ?? ""}
+                  name="availability"
+                >
+                  <option value="">Any availability</option>
+                  <option value="in_stock">Available</option>
+                  <option value="out_of_stock">Out of stock</option>
+                </select>
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                <label className={fieldStyles.label}>
+                  Min price
+                  <input
+                    className={`${fieldStyles.control} min-w-0`}
+                    defaultValue={query.minPrice}
+                    min={0}
+                    name="minPrice"
+                    step={1}
+                    type="number"
+                  />
+                </label>
+                <label className={fieldStyles.label}>
+                  Max price
+                  <input
+                    className={`${fieldStyles.control} min-w-0`}
+                    defaultValue={query.maxPrice}
+                    min={0}
+                    name="maxPrice"
+                    step={1}
+                    type="number"
+                  />
+                </label>
+              </div>
+              <label className={fieldStyles.label}>
+                Sort
+                <select className={fieldStyles.control} defaultValue={query.sort} name="sort">
+                  <option value="newest">Newest</option>
+                  <option value="name">Name</option>
+                  <option value="price_asc">Price: low to high</option>
+                  <option value="price_desc">Price: high to low</option>
+                </select>
+              </label>
+              <button className={buttonStyles.primary} type="submit">
+                Apply filters
+              </button>
+              <Link className="text-center text-sm font-bold text-primary" href="/products">
+                Clear all filters
+              </Link>
+            </form>
+          </details>
         </aside>
         <section aria-label="Products">
           {catalog.items.length === 0 ? (
-            <div className="rounded-3xl border border-dashed border-[var(--border)] bg-surface p-10 text-center">
-              <h2 className="mx-auto">No products match.</h2>
-              <p className="text-[var(--muted)]">
+            <div className={`${cardStyles.default} border-dashed py-14 text-center`}>
+              <span className="mx-auto mb-5 grid size-14 place-items-center rounded-full bg-primary-soft text-primary">
+                <StorefrontIcon name="search" />
+              </span>
+              <h2 className="mx-auto text-2xl">No products match.</h2>
+              <p className="mx-auto mt-2 max-w-md text-muted">
                 Try removing a filter or searching for another term.
               </p>
+              <Link className={`${buttonStyles.secondary} mt-6`} href="/products">
+                Reset filters
+              </Link>
             </div>
           ) : (
             <div className="grid grid-cols-3 gap-5 max-xl:grid-cols-2 max-sm:grid-cols-1">
@@ -204,10 +234,7 @@ export default async function ProductsPage({
               className="mt-10 flex items-center justify-between gap-4"
             >
               {catalog.page > 1 ? (
-                <Link
-                  className="rounded-lg border border-[var(--border)] bg-surface px-4 py-2 font-bold no-underline"
-                  href={pageHref(raw, catalog.page - 1)}
-                >
+                <Link className={buttonStyles.secondary} href={pageHref(raw, catalog.page - 1)}>
                   Previous
                 </Link>
               ) : (
@@ -217,10 +244,7 @@ export default async function ProductsPage({
                 Page {catalog.page} of {catalog.pageCount}
               </span>
               {catalog.page < catalog.pageCount ? (
-                <Link
-                  className="rounded-lg border border-[var(--border)] bg-surface px-4 py-2 font-bold no-underline"
-                  href={pageHref(raw, catalog.page + 1)}
-                >
+                <Link className={buttonStyles.secondary} href={pageHref(raw, catalog.page + 1)}>
                   Next
                 </Link>
               ) : (

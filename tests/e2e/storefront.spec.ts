@@ -189,7 +189,7 @@ test("customers can discover an available product and open its details", async (
   await page.goto(`/products/${productSlug}`);
   await expect(page).toHaveURL(new RegExp(`/products/${productSlug}$`));
   await expect(page.getByRole("heading", { level: 1, name: productName })).toBeVisible();
-  await expect(page.getByText("Available", { exact: true })).toBeVisible();
+  await expect(page.getByText("Ready to order", { exact: true })).toBeVisible();
 });
 
 test("a guest can place a cash-on-delivery order", async ({ page, request }) => {

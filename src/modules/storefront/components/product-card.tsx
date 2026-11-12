@@ -1,6 +1,8 @@
 import Image from "next/image";
 import Link from "next/link";
 
+import { Badge } from "@/components/ui";
+import { StorefrontIcon } from "@/modules/storefront/components/storefront-icon";
 import type { StorefrontProductCard } from "@/modules/storefront/server/storefront-repository";
 
 const zeroDecimalCurrencies = new Set([
@@ -45,12 +47,18 @@ export function minorUnitsToMajor(minor: number, currencyCode: string): number {
 
 export function ProductCard({ product }: { product: StorefrontProductCard }) {
   return (
-    <article className="group overflow-hidden rounded-3xl border border-[var(--border)] bg-surface shadow-[var(--shadow-card)]">
-      <Link className="block no-underline" href={`/products/${product.slug}`}>
-        <div className="relative aspect-[4/3] overflow-hidden bg-[var(--surface-strong)]">
+    <article className="group relative overflow-hidden rounded-card border border-border bg-surface shadow-card transition duration-300 hover:-translate-y-1 hover:border-primary/40 hover:shadow-xl motion-reduce:transform-none motion-reduce:transition-none">
+      <Link
+        className="flex h-full flex-col text-foreground no-underline"
+        href={`/products/${product.slug}`}
+      >
+        <div className="relative aspect-[4/3] overflow-hidden bg-surface-strong">
           {product.image === null ? (
-            <div className="grid h-full place-items-center p-5 text-center text-sm font-bold text-[var(--muted)]">
-              Product image coming soon
+            <div className="grid h-full place-items-center p-5 text-center text-muted">
+              <div>
+                <StorefrontIcon className="mx-auto mb-3 size-9" name="package" />
+                <span className="text-sm font-bold">Product image coming soon</span>
+              </div>
             </div>
           ) : (
             <Image
@@ -61,17 +69,32 @@ export function ProductCard({ product }: { product: StorefrontProductCard }) {
               src={`/api/v1/storefront/images/${product.image.id}`}
             />
           )}
+          <Badge
+            className="absolute top-3 left-3 shadow-sm"
+            tone={product.available ? "success" : "neutral"}
+          >
+            {product.available ? "In stock" : "Out of stock"}
+          </Badge>
         </div>
-        <div className="p-5">
-          <div className="mb-2 flex items-center justify-between gap-3 text-xs font-bold uppercase tracking-[0.08em] text-[var(--muted)]">
-            <span>{product.brandName ?? "ParcelMint selection"}</span>
-            <span>{product.available ? "Available" : "Out of stock"}</span>
-          </div>
-          <h2 className="mb-2 text-2xl">{product.name}</h2>
-          <p className="mb-4 line-clamp-2 text-sm text-[var(--muted)]">
+        <div className="flex flex-1 flex-col p-5">
+          <p className="mb-2 text-xs font-extrabold tracking-[0.1em] text-muted uppercase">
+            {product.brandName ?? "ParcelMint selection"}
+          </p>
+          <h2 className="mb-2 break-words text-xl leading-tight sm:text-2xl">{product.name}</h2>
+          <p className="mb-5 line-clamp-2 text-sm leading-6 text-muted">
             {product.description || "View product details and available variants."}
           </p>
-          <strong>{formatMoney(product.minimumPriceMinor, product.currencyCode)}</strong>
+          <div className="mt-auto flex items-end justify-between gap-4 border-t border-border pt-4">
+            <div>
+              <span className="block text-xs font-bold text-muted">From</span>
+              <strong className="font-display text-xl text-foreground">
+                {formatMoney(product.minimumPriceMinor, product.currencyCode)}
+              </strong>
+            </div>
+            <span className="inline-flex items-center gap-1 text-sm font-extrabold text-primary">
+              View product <StorefrontIcon className="size-4" name="arrow" />
+            </span>
+          </div>
         </div>
       </Link>
     </article>
