@@ -14,6 +14,10 @@ import {
   cartItems,
   carts,
   categories,
+  codCashEvents,
+  codCollections,
+  codDiscrepancies,
+  codReconciliations,
   customerProfiles,
   coupons,
   deliveryZones,
@@ -109,6 +113,18 @@ import {
   getCustomerAccount,
   saveCustomerAddress,
 } from "@/modules/orders/server/customer-account-service";
+import {
+  reconcileCashCollection,
+  recordCollectionFailure,
+  recordCourierCollection,
+  recordRemittanceBatch,
+  resolveCashDiscrepancy,
+  writeOffFailedCollection,
+} from "@/modules/reporting/server/cash-service";
+import {
+  exportOperationalReportCsv,
+  getOperationalDashboard,
+} from "@/modules/reporting/server/reporting-service";
 import {
   cancelTrackedOrder,
   recordOfflineRefund,
@@ -2164,5 +2180,179 @@ describe.skipIf(testDatabaseUrl === undefined)("phase 1 database foundation", ()
 
     await deleteCustomerAddress(firstPrincipal, firstAccount.addresses[0]?.id ?? "", database);
     expect((await getCustomerAccount(firstPrincipal, database)).addresses).toHaveLength(0);
+  });
+
+  it("tracks COD collection, remittance, reconciliation, discrepancies, and reports separately", async () => {
+    const orderPrincipal = await seedOrderPrincipal();
+    const cashPrincipal = await seedOrderPrincipal(["cash.reconcile"]);
+    const { order } = await seedSubmittedOrder();
+    await deliverOrder(order.orderId, orderPrincipal);
+
+    const [due] = await database
+      .select()
+      .from(codCollections)
+      .where(eq(codCollections.orderId, order.orderId));
+    expect(due?.state).toBe("collection_due");
+    if (due === undefined) throw new Error("COD collection was not created");
+
+    await recordCourierCollection(
+      {
+        actor: cashPrincipal,
+        collectedAmountMinor: due.expectedAmountMinor,
+        collectedAt: new Date(),
+        correlationId: randomUUID(),
+        courierReference: `COURIER-${randomUUID()}`,
+        orderId: order.orderId,
+        reason: "Courier confirmed COD collection",
+      },
+      database,
+    );
+    await recordRemittanceBatch(
+      {
+        actor: cashPrincipal,
+        correlationId: randomUUID(),
+        orderId: order.orderId,
+        reason: "Courier submitted remittance batch",
+        remittanceBatch: `BATCH-${randomUUID()}`,
+      },
+      database,
+    );
+    await reconcileCashCollection(
+      {
+        actor: cashPrincipal,
+        correlationId: randomUUID(),
+        orderId: order.orderId,
+        reason: "Remittance exactly matched courier collection",
+        remittedAmountMinor: due.expectedAmountMinor,
+      },
+      database,
+    );
+
+    const [reconciled] = await database
+      .select()
+      .from(codReconciliations)
+      .where(eq(codReconciliations.collectionId, due.id));
+    expect(reconciled?.reconciledAmountMinor).toBe(due.expectedAmountMinor);
+    expect(
+      (
+        await database.select().from(codCashEvents).where(eq(codCashEvents.collectionId, due.id))
+      ).map((event) => event.newState),
+    ).toEqual(["collection_due", "collected_by_courier", "remittance_pending", "reconciled"]);
+
+    const { order: disputedOrder } = await seedSubmittedOrder();
+    await deliverOrder(disputedOrder.orderId, orderPrincipal);
+    const [disputedCollection] = await database
+      .select()
+      .from(codCollections)
+      .where(eq(codCollections.orderId, disputedOrder.orderId));
+    if (disputedCollection === undefined) throw new Error("Disputed collection was not created");
+    await recordCourierCollection(
+      {
+        actor: cashPrincipal,
+        collectedAmountMinor: disputedCollection.expectedAmountMinor,
+        collectedAt: new Date(),
+        correlationId: randomUUID(),
+        courierReference: `COURIER-${randomUUID()}`,
+        orderId: disputedOrder.orderId,
+        reason: "Courier confirmed COD collection",
+      },
+      database,
+    );
+    await recordRemittanceBatch(
+      {
+        actor: cashPrincipal,
+        correlationId: randomUUID(),
+        orderId: disputedOrder.orderId,
+        reason: "Courier submitted short remittance batch",
+        remittanceBatch: `BATCH-${randomUUID()}`,
+      },
+      database,
+    );
+    const mismatch = await reconcileCashCollection(
+      {
+        actor: cashPrincipal,
+        correlationId: randomUUID(),
+        orderId: disputedOrder.orderId,
+        reason: "Remittance was short and requires review",
+        remittedAmountMinor: disputedCollection.expectedAmountMinor - 100,
+      },
+      database,
+    );
+    expect(mismatch.discrepancy).toBe(true);
+    expect(
+      await database
+        .select({ difference: codDiscrepancies.differenceMinor })
+        .from(codDiscrepancies)
+        .where(eq(codDiscrepancies.collectionId, disputedCollection.id)),
+    ).toEqual([{ difference: -100 }]);
+    await resolveCashDiscrepancy(
+      {
+        actor: cashPrincipal,
+        correlationId: randomUUID(),
+        orderId: disputedOrder.orderId,
+        reason: "Accepted documented courier shortage",
+        resolution: "accept_actual",
+      },
+      database,
+    );
+
+    const { order: failedOrder } = await seedSubmittedOrder();
+    await deliverOrder(failedOrder.orderId, orderPrincipal);
+    await recordCollectionFailure(
+      {
+        actor: cashPrincipal,
+        correlationId: randomUUID(),
+        orderId: failedOrder.orderId,
+        reason: "Courier documented that COD could not be collected",
+      },
+      database,
+    );
+    await writeOffFailedCollection(
+      {
+        actor: cashPrincipal,
+        correlationId: randomUUID(),
+        orderId: failedOrder.orderId,
+        reason: "Approved operational write-off after courier investigation",
+      },
+      database,
+    );
+    expect(
+      (
+        await database
+          .select({ state: codCollections.state })
+          .from(codCollections)
+          .where(eq(codCollections.orderId, failedOrder.orderId))
+      )[0]?.state,
+    ).toBe("written_off");
+
+    const dashboard = await getOperationalDashboard(database);
+    const pkr = dashboard.currencies.find((row) => row.currencyCode === "PKR");
+    expect(pkr?.submittedOrderValueMinor).toBeGreaterThanOrEqual(
+      due.expectedAmountMinor + disputedCollection.expectedAmountMinor,
+    );
+    expect(pkr?.cashCollectedMinor).toBeGreaterThanOrEqual(
+      due.expectedAmountMinor + disputedCollection.expectedAmountMinor,
+    );
+    expect(pkr?.cashReconciledMinor).toBeGreaterThanOrEqual(
+      due.expectedAmountMinor + disputedCollection.expectedAmountMinor - 100,
+    );
+    const csv = await exportOperationalReportCsv({}, database);
+    expect(csv).toContain(order.orderNumber);
+    expect(csv).toContain(disputedOrder.orderNumber);
+    expect(csv.split("\r\n")[0]).toContain("submitted_order_value_minor");
+    expect(csv.split("\r\n")[0]).toContain("cash_reconciled_minor");
+
+    await expect(
+      recordRemittanceBatch(
+        {
+          actor: orderPrincipal,
+          correlationId: randomUUID(),
+          orderId: order.orderId,
+          reason: "Unauthorized remittance attempt",
+          remittanceBatch: "DENIED-BATCH",
+        },
+        database,
+      ),
+    ).rejects.toThrow("cash_reconciliation_denied");
   });
 });

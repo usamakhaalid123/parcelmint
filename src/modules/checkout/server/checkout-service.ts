@@ -6,6 +6,7 @@ import { z } from "zod";
 import { getDatabase } from "@/db/client";
 import {
   carts,
+  codCollections,
   couponRedemptions,
   coupons,
   deliveryZones,
@@ -340,6 +341,11 @@ export async function createOrderFromCart(
       shippingMinor: pricing.shippingMinor,
       subtotalMinor: pricing.subtotalMinor,
       taxMinor: pricing.taxMinor,
+    });
+    await transaction.insert(codCollections).values({
+      currencyCode,
+      expectedAmountMinor: pricing.grandTotalMinor,
+      orderId,
     });
     await transaction.insert(orderAddresses).values({
       addressLine: input.addressLine,

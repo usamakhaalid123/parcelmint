@@ -39,6 +39,20 @@ export default function AdminDashboardPage() {
         </Link>
         <Link
           className="min-h-56 rounded-3xl border border-[var(--border)] bg-surface p-[clamp(1.25rem,3vw,2rem)] no-underline shadow-[var(--shadow-card)] transition hover:-translate-y-0.5 hover:border-primary motion-reduce:transform-none"
+          href="/admin/reports"
+        >
+          <span className="text-xs font-extrabold tracking-[0.08em] text-primary uppercase">
+            Phase 7
+          </span>
+          <h2 className="my-4 max-w-none text-[clamp(1.5rem,3vw,2.25rem)]">
+            COD reconciliation &amp; reports
+          </h2>
+          <p className="max-w-lg text-[var(--muted)]">
+            Trace collections and remittances, resolve discrepancies, and export operational values.
+          </p>
+        </Link>
+        <Link
+          className="min-h-56 rounded-3xl border border-[var(--border)] bg-surface p-[clamp(1.25rem,3vw,2rem)] no-underline shadow-[var(--shadow-card)] transition hover:-translate-y-0.5 hover:border-primary motion-reduce:transform-none"
           href="/admin/orders"
         >
           <span className="text-xs font-extrabold tracking-[0.08em] text-primary uppercase">

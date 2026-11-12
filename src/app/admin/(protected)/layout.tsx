@@ -45,6 +45,18 @@ export default async function ProtectedAdminLayout({ children }: { children: Rea
           >
             Blocks
           </Link>
+          <Link
+            className="rounded-lg px-3 py-2 font-bold text-[var(--muted)] no-underline hover:bg-[var(--surface-strong)] hover:text-foreground"
+            href="/admin/cash"
+          >
+            Cash
+          </Link>
+          <Link
+            className="rounded-lg px-3 py-2 font-bold text-[var(--muted)] no-underline hover:bg-[var(--surface-strong)] hover:text-foreground"
+            href="/admin/reports"
+          >
+            Reports
+          </Link>
         </nav>
         <form action={signOut} className="justify-self-end">
           <button

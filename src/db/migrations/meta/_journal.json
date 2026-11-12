@@ -57,6 +57,13 @@
       "when": 1794414125482,
       "tag": "0007_swift_kid_colt",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1794478977355,
+      "tag": "0008_unknown_pete_wisdom",
+      "breakpoints": true
     }
   ]
 }

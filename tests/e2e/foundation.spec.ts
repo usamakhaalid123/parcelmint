@@ -43,3 +43,19 @@ test("protects order operations from unauthenticated access", async ({ page }) =
   await expect(page).toHaveURL(/\/admin\/sign-in$/);
   await expect(page.getByRole("heading", { level: 1, name: "Sign in to continue." })).toBeVisible();
 });
+
+test("protects COD reconciliation and reports from unauthenticated access", async ({
+  page,
+  request,
+}) => {
+  await page.goto("/admin/cash");
+  await expect(page).toHaveURL(/\/admin\/sign-in$/);
+
+  const reportsResponse = await request.get("/admin/reports", { maxRedirects: 0 });
+  expect(reportsResponse.status()).toBe(307);
+  expect(reportsResponse.headers().location).toBe("/admin/sign-in");
+
+  const response = await request.get("/api/v1/admin/reports/cod.csv");
+  expect(response.status()).toBe(403);
+  expect(response.headers()["cache-control"]).toBe("no-store");
+});

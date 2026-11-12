@@ -7,6 +7,8 @@ import { getDatabase } from "@/db/client";
 import {
   adminNotes,
   auditLogs,
+  codCashEvents,
+  codCollections,
   deliveryAttempts,
   fulfillmentItems,
   fulfillments,
@@ -43,6 +45,31 @@ import {
 
 type Database = ReturnType<typeof getDatabase>;
 type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
+
+async function markCashCollectionDue(
+  transaction: Transaction,
+  input: { actorUserId?: string; correlationId: string; orderId: string; reason: string },
+) {
+  const [collection] = await transaction
+    .select({ id: codCollections.id, state: codCollections.state })
+    .from(codCollections)
+    .where(eq(codCollections.orderId, input.orderId))
+    .for("update")
+    .limit(1);
+  if (collection === undefined || collection.state !== "not_due") return;
+  await transaction
+    .update(codCollections)
+    .set({ state: "collection_due", updatedAt: new Date() })
+    .where(eq(codCollections.id, collection.id));
+  await transaction.insert(codCashEvents).values({
+    actorUserId: input.actorUserId,
+    collectionId: collection.id,
+    correlationId: input.correlationId,
+    newState: "collection_due",
+    previousState: collection.state,
+    reason: input.reason,
+  });
+}
 
 const operationInputSchema = z.object({
   correlationId: z.string().uuid(),
@@ -609,6 +636,14 @@ export async function transitionShipment(
             : null;
     if (topic !== null)
       await enqueueOrderEvent(transaction, values.orderId, topic, values.correlationId);
+    if (nextState === "delivered") {
+      await markCashCollectionDue(transaction, {
+        actorUserId: principal.userId,
+        correlationId: values.correlationId,
+        orderId: values.orderId,
+        reason: values.reason,
+      });
+    }
   });
 }
 
@@ -708,6 +743,13 @@ export async function applyCourierEvent(
             : null;
     if (topic !== null) {
       await enqueueOrderEvent(transaction, shipment.orderId, topic, correlationId);
+    }
+    if (values.nextState === "delivered") {
+      await markCashCollectionDue(transaction, {
+        correlationId,
+        orderId: shipment.orderId,
+        reason: values.reason,
+      });
     }
     return { duplicate: false, orderId: shipment.orderId };
   });
